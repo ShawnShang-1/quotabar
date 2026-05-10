@@ -3,8 +3,16 @@ import SwiftData
 
 @main
 struct QuotaBarApp: App {
-    @StateObject private var appState = AppState()
+    @StateObject private var appState: AppState
     @StateObject private var alertManager = AlertManager()
+
+    init() {
+        let state = AppState()
+        _appState = StateObject(wrappedValue: state)
+        Task { @MainActor in
+            await state.bootstrap()
+        }
+    }
 
     var body: some Scene {
         MenuBarExtra {

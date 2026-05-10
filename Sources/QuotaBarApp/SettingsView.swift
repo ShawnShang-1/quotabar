@@ -50,6 +50,8 @@ struct SettingsView: View {
                 TextField("Bearer token", text: $appState.settings.proxyBearerToken)
                     .textSelection(.enabled)
 
+                Toggle("Start proxy when QuotaBar opens", isOn: $appState.settings.autoStartProxy)
+
                 HStack {
                     Text("Base URL")
                     Spacer()
@@ -59,10 +61,33 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                if appState.proxyStatus == .needsRestart {
+                    Text("Restart the proxy to apply the new port or bearer token.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                HStack {
+                    Button("Copy URL") {
+                        appState.copyProxyBaseURLToPasteboard()
+                    }
+
+                    Button("Copy Token") {
+                        appState.copyProxyBearerTokenToPasteboard()
+                    }
+                }
+
                 HStack {
                     Button("Start Proxy") {
                         Task {
                             await appState.startProxy()
+                        }
+                    }
+                    .disabled(!appState.settings.hasDeepSeekAPIKey)
+
+                    Button("Restart") {
+                        Task {
+                            await appState.restartProxy()
                         }
                     }
                     .disabled(!appState.settings.hasDeepSeekAPIKey)
@@ -107,6 +132,13 @@ struct SettingsView: View {
 
                 Toggle("Usage notifications", isOn: $appState.settings.notificationsEnabled)
 
+                Stepper(
+                    "Refresh every \(appState.settings.refreshIntervalSeconds / 60) min",
+                    value: $appState.settings.refreshIntervalSeconds,
+                    in: 60...3600,
+                    step: 60
+                )
+
                 HStack {
                     Text("Permission")
                     Spacer()
@@ -122,9 +154,28 @@ struct SettingsView: View {
                 .disabled(alertManager.authorizationState == .authorized)
             }
 
+            Section("Ledger") {
+                TextField("Model filter", text: $appState.ledgerModelFilter)
+                TextField("Client filter", text: $appState.ledgerClientFilter)
+                TextField("Status filter, comma-separated", text: $appState.ledgerStatusFilter)
+
+                HStack {
+                    Button("Export CSV") {
+                        appState.exportLedgerCSV()
+                    }
+
+                    Button("Export JSON") {
+                        appState.exportLedgerJSON()
+                    }
+
+                    Button("Clear Ledger", role: .destructive) {
+                        appState.clearLedger()
+                    }
+                }
+            }
+
             Section("System") {
                 Toggle("Launch at login", isOn: $appState.settings.launchAtLogin)
-                    .disabled(true)
             }
 
             if let message = appState.lastErrorMessage ?? alertManager.lastErrorMessage {
@@ -139,7 +190,7 @@ struct SettingsView: View {
         .padding(20)
         .task {
             appState.attachModelContext(modelContext)
-            appState.loadKeyState()
+            await appState.bootstrap()
             await alertManager.refreshAuthorizationState()
         }
     }

@@ -15,7 +15,8 @@ final class AlertManager: ObservableObject {
     @Published private(set) var lastErrorMessage: String?
 
     private let notificationCenter: UNUserNotificationCenter?
-    private var sentIdentifiers = Set<String>()
+    private var alertStateTracker = UsageAlertStateTracker()
+    private var activeAlertIDs = Set<String>()
 
     init(notificationCenter: UNUserNotificationCenter? = nil) {
         if let notificationCenter {
@@ -81,27 +82,29 @@ final class AlertManager: ObservableObject {
     }
 
     func schedule(_ alert: UsageAlertCandidate) async {
-        guard !sentIdentifiers.contains(alert.id) else {
-            return
-        }
+        await schedule([alert])
+    }
 
+    private func deliver(_ alert: UsageAlertCandidate) async {
         await scheduleUsageAlert(
             title: alert.title,
             body: alert.body,
             identifier: alert.id
         )
-        sentIdentifiers.insert(alert.id)
     }
 
     func schedule(_ alerts: [UsageAlertCandidate]) async {
-        for alert in alerts {
-            await schedule(alert)
+        activeAlertIDs = Set(alerts.map(\.id))
+        let alertsToSend = alertStateTracker.alertsToNotify(from: alerts)
+        for alert in alertsToSend {
+            await deliver(alert)
         }
     }
 
     func removePendingAlerts() {
-        notificationCenter?.removePendingNotificationRequests(withIdentifiers: Array(sentIdentifiers) + ["quotabar.usage-alert"])
-        sentIdentifiers.removeAll()
+        notificationCenter?.removePendingNotificationRequests(withIdentifiers: Array(activeAlertIDs) + ["quotabar.usage-alert"])
+        activeAlertIDs.removeAll()
+        alertStateTracker = UsageAlertStateTracker()
     }
 }
 

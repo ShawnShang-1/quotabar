@@ -6,16 +6,20 @@ public actor LocalProxyServer {
     public enum Error: Swift.Error, Equatable, Sendable {
         case nonLocalhostBinding(String)
         case invalidPort(Int)
+        case portInUse(Int)
+        case requestBodyTooLarge(Int)
         case socketFailure(String)
     }
 
     public struct Configuration: Equatable, Sendable {
         public var host: String
         public var port: Int
+        public var maxBodyBytes: Int
 
-        public init(host: String = "127.0.0.1", port: Int = 0) {
+        public init(host: String = "127.0.0.1", port: Int = 0, maxBodyBytes: Int = 10 * 1_024 * 1_024) {
             self.host = host
             self.port = port
+            self.maxBodyBytes = maxBodyBytes
         }
 
         public var isLocalhostBinding: Bool {
@@ -52,6 +56,13 @@ public actor LocalProxyServer {
                 statusCode: 401,
                 headers: ["Content-Type": "application/json"],
                 body: Data(#"{"error":"unauthorized"}"#.utf8)
+            )
+        }
+        if let body = request.body, body.count > configuration.maxBodyBytes {
+            return ProxyHTTPResponse(
+                statusCode: 413,
+                headers: ["Content-Type": "application/json"],
+                body: Data(#"{"error":"request_body_too_large"}"#.utf8)
             )
         }
 
@@ -137,6 +148,12 @@ public actor LocalProxyServer {
         guard fileDescriptor >= 0 else {
             throw Error.socketFailure(String(cString: strerror(errno)))
         }
+        let flags = fcntl(fileDescriptor, F_GETFL, 0)
+        guard flags >= 0, fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+            let message = String(cString: strerror(errno))
+            Darwin.close(fileDescriptor)
+            throw Error.socketFailure(message)
+        }
 
         var reuse = 1
         guard setsockopt(fileDescriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
@@ -157,6 +174,10 @@ public actor LocalProxyServer {
             }
         }
         guard bindStatus == 0 else {
+            if errno == EADDRINUSE {
+                Darwin.close(fileDescriptor)
+                throw Error.portInUse(configuration.port)
+            }
             let message = String(cString: strerror(errno))
             Darwin.close(fileDescriptor)
             throw Error.socketFailure(message)
@@ -171,12 +192,10 @@ public actor LocalProxyServer {
         listenerFileDescriptor = fileDescriptor
 
         let source = DispatchSource.makeReadSource(fileDescriptor: fileDescriptor, queue: DispatchQueue(label: "QuotaBar.LocalProxyServer.accept"))
+        let maxBodyBytes = configuration.maxBodyBytes
         source.setEventHandler { [weak self] in
             guard let self else { return }
-            Self.acceptPendingConnections(on: fileDescriptor, server: self)
-        }
-        source.setCancelHandler {
-            Darwin.close(fileDescriptor)
+            Self.acceptPendingConnections(on: fileDescriptor, server: self, maxBodyBytes: maxBodyBytes)
         }
         listenerSource = source
         source.resume()
@@ -185,9 +204,13 @@ public actor LocalProxyServer {
     }
 
     public func stop() {
+        let fileDescriptor = listenerFileDescriptor
         listenerSource?.cancel()
         listenerSource = nil
         listenerFileDescriptor = -1
+        if fileDescriptor >= 0 {
+            Darwin.close(fileDescriptor)
+        }
     }
 
     private var ipv4LoopbackAddress: String {
@@ -209,7 +232,11 @@ public actor LocalProxyServer {
         return Int(UInt16(bigEndian: address.sin_port))
     }
 
-    private nonisolated static func acceptPendingConnections(on listenerFileDescriptor: CInt, server: LocalProxyServer) {
+    private nonisolated static func acceptPendingConnections(
+        on listenerFileDescriptor: CInt,
+        server: LocalProxyServer,
+        maxBodyBytes: Int
+    ) {
         while true {
             let clientFileDescriptor = Darwin.accept(listenerFileDescriptor, nil, nil)
             if clientFileDescriptor < 0 {
@@ -218,21 +245,37 @@ public actor LocalProxyServer {
                 }
                 return
             }
+            let flags = fcntl(clientFileDescriptor, F_GETFL, 0)
+            if flags >= 0 {
+                _ = fcntl(clientFileDescriptor, F_SETFL, flags & ~O_NONBLOCK)
+            }
 
             DispatchQueue.global(qos: .userInitiated).async {
-                processConnection(clientFileDescriptor, server: server)
+                processConnection(clientFileDescriptor, server: server, maxBodyBytes: maxBodyBytes)
             }
         }
     }
 
-    private nonisolated static func processConnection(_ fileDescriptor: CInt, server: LocalProxyServer) {
+    private nonisolated static func processConnection(
+        _ fileDescriptor: CInt,
+        server: LocalProxyServer,
+        maxBodyBytes: Int
+    ) {
         do {
-            let request = try readHTTPRequest(from: fileDescriptor)
+            let request = try readHTTPRequest(from: fileDescriptor, maxBodyBytes: maxBodyBytes)
             Task.detached {
                 let proxyResponse = await server.handle(request)
                 try? writeHTTPResponse(proxyResponse, to: fileDescriptor)
                 Darwin.close(fileDescriptor)
             }
+        } catch Error.requestBodyTooLarge {
+            let response = ProxyHTTPResponse(
+                statusCode: 413,
+                headers: ["Content-Type": "application/json"],
+                body: Data(#"{"error":"request_body_too_large"}"#.utf8)
+            )
+            try? writeHTTPResponse(response, to: fileDescriptor)
+            Darwin.close(fileDescriptor)
         } catch {
             let response = ProxyHTTPResponse(
                 statusCode: 400,
@@ -244,7 +287,7 @@ public actor LocalProxyServer {
         }
     }
 
-    private nonisolated static func readHTTPRequest(from fileDescriptor: CInt) throws -> ProxyHTTPRequest {
+    private nonisolated static func readHTTPRequest(from fileDescriptor: CInt, maxBodyBytes: Int) throws -> ProxyHTTPRequest {
         var buffer = Data()
         var chunk = [UInt8](repeating: 0, count: 4_096)
 
@@ -293,14 +336,23 @@ public actor LocalProxyServer {
         let contentLength = headers.first {
             $0.key.caseInsensitiveCompare("Content-Length") == .orderedSame
         }.flatMap { Int($0.value) } ?? 0
+        guard contentLength <= maxBodyBytes else {
+            throw Error.requestBodyTooLarge(contentLength)
+        }
 
         var body = Data(buffer[headerRange.upperBound...])
+        guard body.count <= maxBodyBytes else {
+            throw Error.requestBodyTooLarge(body.count)
+        }
         while body.count < contentLength {
             let count = Darwin.recv(fileDescriptor, &chunk, min(chunk.count, contentLength - body.count), 0)
             guard count > 0 else {
                 throw Error.socketFailure("Client closed connection before body was complete")
             }
             body.append(chunk, count: count)
+            guard body.count <= maxBodyBytes else {
+                throw Error.requestBodyTooLarge(body.count)
+            }
         }
 
         if body.count > contentLength {
@@ -351,6 +403,7 @@ public actor LocalProxyServer {
         case 400: "Bad Request"
         case 401: "Unauthorized"
         case 404: "Not Found"
+        case 413: "Content Too Large"
         case 502: "Bad Gateway"
         default: "HTTP"
         }

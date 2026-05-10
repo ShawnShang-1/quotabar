@@ -36,6 +36,9 @@ let package = Package(
                 "QuotaBarCore",
                 "QuotaBarProxy"
             ]
+        ),
+        .testTarget(
+            name: "QuotaBarPackagingTests"
         )
     ],
     swiftLanguageModes: [.v6]

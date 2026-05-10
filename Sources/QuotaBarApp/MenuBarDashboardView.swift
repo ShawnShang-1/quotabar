@@ -98,7 +98,7 @@ struct MenuBarDashboardView: View {
         .frame(width: 380)
         .task {
             appState.attachModelContext(modelContext)
-            appState.loadKeyState()
+            await appState.bootstrap()
             await alertManager.refreshAuthorizationState()
             await scheduleCurrentAlerts()
         }

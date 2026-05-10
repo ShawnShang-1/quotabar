@@ -1,6 +1,8 @@
 import Foundation
+import AppKit
 import QuotaBarCore
 import QuotaBarProxy
+import ServiceManagement
 import SwiftData
 import SwiftUI
 
@@ -10,25 +12,52 @@ final class AppState: ObservableObject {
     @Published var todaySummary: UsageSummary
     @Published var todayByModel: [UsageModelSummary]
     @Published var monthlyTrend: [DailyUsagePoint]
-    @Published var settings: QuotaSettings
+    @Published var settings: QuotaSettings {
+        didSet {
+            persistSettings()
+            if hasBootstrapped, oldValue.refreshIntervalSeconds != settings.refreshIntervalSeconds {
+                startBalanceRefreshTimer()
+            }
+            if hasBootstrapped, oldValue.launchAtLogin != settings.launchAtLogin {
+                applyLaunchAtLogin(settings.launchAtLogin)
+            }
+            if hasBootstrapped, proxyStatus.isRunning, oldValue.proxyPort != settings.proxyPort || oldValue.proxyBearerToken != settings.proxyBearerToken {
+                proxyStatus = .needsRestart
+            }
+        }
+    }
     @Published var proxyStatus: ProxyStatus = .stopped
     @Published var deepSeekAPIKeyDraft = ""
     @Published var lastErrorMessage: String?
+    @Published var ledgerModelFilter = ""
+    @Published var ledgerClientFilter = ""
+    @Published var ledgerStatusFilter = ""
 
     private let keychain: KeychainCredentialStore
+    private let settingsStore: PersistentSettingsStore
     private var proxyServer: LocalProxyServer?
     private var modelContext: ModelContext?
     private var memoryEvents: [UsageEvent]
+    private var refreshTask: Task<Void, Never>?
+    private var hasBootstrapped = false
 
     init(
         keychain: KeychainCredentialStore = KeychainCredentialStore(),
+        settingsStore: PersistentSettingsStore = PersistentSettingsStore(),
         balanceSummary: BalanceSummary = .preview,
-        settings: QuotaSettings = .default,
+        settings: QuotaSettings? = nil,
         memoryEvents: [UsageEvent] = UsageEvent.previewEvents
     ) {
         self.keychain = keychain
+        self.settingsStore = settingsStore
         self.balanceSummary = balanceSummary
-        self.settings = settings
+        if let settings {
+            self.settings = settings
+        } else if let persisted = try? settingsStore.load() {
+            self.settings = QuotaSettings(persistent: persisted)
+        } else {
+            self.settings = .default
+        }
         self.memoryEvents = memoryEvents
         let initialTodaySummary = UsageAggregator.summary(
             for: memoryEvents,
@@ -40,6 +69,10 @@ final class AppState: ObservableObject {
             for: memoryEvents,
             interval: Self.monthInterval()
         )
+    }
+
+    deinit {
+        refreshTask?.cancel()
     }
 
     var statusTitle: String {
@@ -86,6 +119,25 @@ final class AppState: ObservableObject {
         reloadLedger()
     }
 
+    func bootstrap() async {
+        guard !hasBootstrapped else {
+            return
+        }
+
+        hasBootstrapped = true
+        loadKeyState()
+        if StartupRestorePolicy.shouldStartProxy(
+            settings: settings.persistentSettings,
+            hasAPIKey: settings.hasDeepSeekAPIKey
+        ) {
+            await startProxy()
+        }
+        if settings.hasDeepSeekAPIKey {
+            await refreshBalance()
+            startBalanceRefreshTimer()
+        }
+    }
+
     func loadKeyState() {
         do {
             settings.hasDeepSeekAPIKey = try keychain.load(account: KeychainAccount.deepSeekAPIKey) != nil
@@ -100,6 +152,7 @@ final class AppState: ObservableObject {
             try keychain.save(deepSeekAPIKeyDraft, account: KeychainAccount.deepSeekAPIKey)
             deepSeekAPIKeyDraft = ""
             settings.hasDeepSeekAPIKey = true
+            startBalanceRefreshTimer()
             lastErrorMessage = nil
         } catch {
             lastErrorMessage = error.localizedDescription
@@ -110,6 +163,11 @@ final class AppState: ObservableObject {
         do {
             try keychain.delete(account: KeychainAccount.deepSeekAPIKey)
             settings.hasDeepSeekAPIKey = false
+            refreshTask?.cancel()
+            refreshTask = nil
+            Task {
+                await stopProxy()
+            }
             lastErrorMessage = nil
         } catch {
             lastErrorMessage = error.localizedDescription
@@ -130,6 +188,7 @@ final class AppState: ObservableObject {
     func startProxy() async {
         do {
             let apiKey = try requireDeepSeekAPIKey()
+            await proxyServer?.stop()
             let provider = DeepSeekProvider(apiKey: apiKey)
             let server = LocalProxyServer(
                 configuration: .init(host: "127.0.0.1", port: settings.proxyPort),
@@ -158,8 +217,55 @@ final class AppState: ObservableObject {
         proxyStatus = .stopped
     }
 
+    func restartProxy() async {
+        await stopProxy()
+        await startProxy()
+    }
+
     func refreshUsageViews() {
         reloadLedger()
+    }
+
+    func clearLedger() {
+        memoryEvents.removeAll()
+        guard let modelContext else {
+            rebuildSnapshots(from: [])
+            return
+        }
+
+        do {
+            let entries = try modelContext.fetch(FetchDescriptor<UsageLedgerEntry>())
+            for entry in entries {
+                modelContext.delete(entry)
+            }
+            try modelContext.save()
+            rebuildSnapshots(from: [])
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    func exportLedgerCSV() {
+        exportLedger(suggestedName: "quotabar-ledger.csv") { events in
+            Data(try UsageLedgerExporter.exportCSV(events).utf8)
+        }
+    }
+
+    func exportLedgerJSON() {
+        exportLedger(suggestedName: "quotabar-ledger.json") { events in
+            try UsageLedgerExporter.exportJSON(events)
+        }
+    }
+
+    func copyProxyBaseURLToPasteboard() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(proxyBaseURLText, forType: .string)
+    }
+
+    func copyProxyBearerTokenToPasteboard() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(settings.proxyBearerToken, forType: .string)
     }
 
     private func record(_ event: UsageEvent) {
@@ -185,7 +291,7 @@ final class AppState: ObservableObject {
                 sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
             )
             let persistedEvents = try modelContext.fetch(descriptor).compactMap(\.usageEvent)
-            return persistedEvents.isEmpty ? memoryEvents : persistedEvents
+            return persistedEvents
         } catch {
             lastErrorMessage = error.localizedDescription
             return memoryEvents
@@ -204,6 +310,85 @@ final class AppState: ObservableObject {
             throw AppStateError.missingDeepSeekAPIKey
         }
         return apiKey
+    }
+
+    private func exportLedger(
+        suggestedName: String,
+        writer: ([UsageEvent]) throws -> Data
+    ) {
+        let events = UsageLedgerExporter.filter(currentEvents(), query: ledgerQuery)
+        do {
+            let data = try writer(events)
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = suggestedName
+            panel.canCreateDirectories = true
+            panel.isExtensionHidden = false
+
+            if panel.runModal() == .OK, let url = panel.url {
+                try data.write(to: url, options: .atomic)
+            }
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    private var ledgerQuery: UsageLedgerQuery {
+        let statusTokens = ledgerStatusFilter
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let statusCodes = statusTokens.compactMap(Int.init)
+        if !statusTokens.isEmpty, statusCodes.count != statusTokens.count {
+            lastErrorMessage = "Status filter must contain only numeric HTTP status codes."
+        }
+
+        return UsageLedgerQuery(
+            models: ledgerModelFilter.isEmpty ? [] : [ledgerModelFilter],
+            clientLabels: ledgerClientFilter.isEmpty ? [] : [ledgerClientFilter],
+            statusCodes: Set(statusCodes)
+        )
+    }
+
+    private func persistSettings() {
+        do {
+            try settingsStore.save(settings.persistentSettings)
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func startBalanceRefreshTimer() {
+        guard settings.hasDeepSeekAPIKey else {
+            refreshTask?.cancel()
+            refreshTask = nil
+            return
+        }
+        refreshTask?.cancel()
+        let interval = max(settings.refreshIntervalSeconds, 60)
+        refreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(interval))
+                guard !Task.isCancelled else {
+                    return
+                }
+                await self?.refreshBalance()
+            }
+        }
+    }
+
+    private func applyLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
     }
 
     private static func todayInterval(now: Date = .now, calendar: Calendar = .current) -> DateInterval {
@@ -251,6 +436,7 @@ enum KeychainAccount {
 enum ProxyStatus: Equatable {
     case stopped
     case running(port: Int)
+    case needsRestart
     case failed(String)
 
     var label: String {
@@ -259,9 +445,18 @@ enum ProxyStatus: Equatable {
             "Stopped"
         case let .running(port):
             "Running on \(port)"
+        case .needsRestart:
+            "Restart required"
         case .failed:
             "Failed"
         }
+    }
+
+    var isRunning: Bool {
+        if case .running = self {
+            return true
+        }
+        return false
     }
 }
 
@@ -306,7 +501,46 @@ struct QuotaSettings: Equatable {
     var launchAtLogin: Bool
     var proxyPort: Int
     var proxyBearerToken: String
+    var autoStartProxy: Bool
+    var refreshIntervalSeconds: Int
     var hasDeepSeekAPIKey: Bool
+
+    init(
+        dailyBudgetUSD: Decimal,
+        lowBalanceThreshold: Decimal,
+        spikeMultiplier: Double,
+        notificationsEnabled: Bool,
+        launchAtLogin: Bool,
+        proxyPort: Int,
+        proxyBearerToken: String,
+        autoStartProxy: Bool,
+        refreshIntervalSeconds: Int,
+        hasDeepSeekAPIKey: Bool
+    ) {
+        self.dailyBudgetUSD = dailyBudgetUSD
+        self.lowBalanceThreshold = lowBalanceThreshold
+        self.spikeMultiplier = spikeMultiplier
+        self.notificationsEnabled = notificationsEnabled
+        self.launchAtLogin = launchAtLogin
+        self.proxyPort = proxyPort
+        self.proxyBearerToken = proxyBearerToken
+        self.autoStartProxy = autoStartProxy
+        self.refreshIntervalSeconds = refreshIntervalSeconds
+        self.hasDeepSeekAPIKey = hasDeepSeekAPIKey
+    }
+
+    init(persistent: PersistentQuotaSettings, hasDeepSeekAPIKey: Bool = false) {
+        dailyBudgetUSD = persistent.dailyBudgetUSD
+        lowBalanceThreshold = persistent.lowBalanceThreshold
+        spikeMultiplier = persistent.spikeMultiplier
+        notificationsEnabled = persistent.notificationsEnabled
+        launchAtLogin = persistent.launchAtLogin
+        proxyPort = persistent.proxyPort
+        proxyBearerToken = persistent.proxyBearerToken
+        autoStartProxy = persistent.autoStartProxy
+        refreshIntervalSeconds = persistent.refreshIntervalSeconds
+        self.hasDeepSeekAPIKey = hasDeepSeekAPIKey
+    }
 
     static let `default` = QuotaSettings(
         dailyBudgetUSD: Decimal(string: "5")!,
@@ -316,8 +550,24 @@ struct QuotaSettings: Equatable {
         launchAtLogin: false,
         proxyPort: 3847,
         proxyBearerToken: UUID().uuidString,
+        autoStartProxy: true,
+        refreshIntervalSeconds: 300,
         hasDeepSeekAPIKey: false
     )
+
+    var persistentSettings: PersistentQuotaSettings {
+        PersistentQuotaSettings(
+            proxyPort: proxyPort,
+            proxyBearerToken: proxyBearerToken,
+            autoStartProxy: autoStartProxy,
+            refreshIntervalSeconds: refreshIntervalSeconds,
+            dailyBudgetUSD: dailyBudgetUSD,
+            lowBalanceThreshold: lowBalanceThreshold,
+            spikeMultiplier: spikeMultiplier,
+            notificationsEnabled: notificationsEnabled,
+            launchAtLogin: launchAtLogin
+        )
+    }
 }
 
 extension Decimal {
