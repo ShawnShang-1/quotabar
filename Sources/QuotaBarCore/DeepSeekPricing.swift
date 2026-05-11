@@ -40,33 +40,42 @@ public struct DeepSeekPricing: Sendable {
 
     private static let v4Flash = DeepSeekModelPricing(
         canonicalModel: "deepseek-v4-flash",
-        cacheHitInputUSDPerMillion: Decimal(string: "0.028")!,
+        cacheHitInputUSDPerMillion: Decimal(string: "0.0028")!,
         cacheMissInputUSDPerMillion: Decimal(string: "0.14")!,
         outputUSDPerMillion: Decimal(string: "0.28")!
     )
 
     private static let v4Pro = DeepSeekModelPricing(
         canonicalModel: "deepseek-v4-pro",
-        cacheHitInputUSDPerMillion: Decimal(string: "0.145")!,
+        cacheHitInputUSDPerMillion: Decimal(string: "0.0145")!,
         cacheMissInputUSDPerMillion: Decimal(string: "1.74")!,
         outputUSDPerMillion: Decimal(string: "3.48")!
     )
 
+    private static let v4ProDiscounted = DeepSeekModelPricing(
+        canonicalModel: "deepseek-v4-pro",
+        cacheHitInputUSDPerMillion: Decimal(string: "0.003625")!,
+        cacheMissInputUSDPerMillion: Decimal(string: "0.435")!,
+        outputUSDPerMillion: Decimal(string: "0.87")!
+    )
+
+    private static let v4ProDiscountEndsAt = Date(timeIntervalSince1970: 1_780_243_200)
+
     public init() {}
 
-    public static func pricing(for model: String) throws -> DeepSeekModelPricing {
+    public static func pricing(for model: String, at date: Date = .now) throws -> DeepSeekModelPricing {
         switch model {
         case "deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash":
             v4Flash
         case "deepseek-v4-pro":
-            v4Pro
+            date < v4ProDiscountEndsAt ? v4ProDiscounted : v4Pro
         default:
             throw DeepSeekPricingError.unsupportedModel(model)
         }
     }
 
-    public func estimateCostUSD(model: String, usage: TokenUsage) throws -> Decimal {
-        let pricing = try Self.pricing(for: model)
+    public func estimateCostUSD(model: String, usage: TokenUsage, at date: Date = .now) throws -> Decimal {
+        let pricing = try Self.pricing(for: model, at: date)
         return pricing.costUSD(
             promptCacheHitTokens: usage.cacheHitInputTokens,
             promptCacheMissTokens: usage.cacheMissInputTokens,
@@ -74,7 +83,7 @@ public struct DeepSeekPricing: Sendable {
         )
     }
 
-    public static func canonicalModel(for model: String) throws -> String {
-        try pricing(for: model).canonicalModel
+    public static func canonicalModel(for model: String, at date: Date = .now) throws -> String {
+        try pricing(for: model, at: date).canonicalModel
     }
 }

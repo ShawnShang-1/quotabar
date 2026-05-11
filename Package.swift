@@ -38,6 +38,14 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "QuotaBarAppTests",
+            dependencies: [
+                "QuotaBarCore",
+                "QuotaBarProxy",
+                "QuotaBarApp"
+            ]
+        ),
+        .testTarget(
             name: "QuotaBarPackagingTests"
         )
     ],

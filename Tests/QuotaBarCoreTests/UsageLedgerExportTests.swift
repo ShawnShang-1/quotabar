@@ -42,7 +42,7 @@ private func makeLedgerEvents() -> [UsageEvent] {
             provider: .deepSeek,
             model: "deepseek-chat",
             usage: TokenUsage(inputTokens: 12, outputTokens: 7, cacheHitInputTokens: 4, cacheMissInputTokens: 8),
-            costUSD: Decimal(string: "0.000003192")!,
+            costUSD: Decimal(string: "0.0000030912")!,
             statusCode: 200,
             durationMS: 120,
             clientLabel: "codex",

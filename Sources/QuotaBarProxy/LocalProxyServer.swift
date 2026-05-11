@@ -97,13 +97,13 @@ public actor LocalProxyServer {
         guard
             let usageRecorder,
             let body = response.body,
-            let usage = try? DeepSeekProvider.extractUsage(fromNonStreamingBody: body),
+            let usage = Self.extractUsage(from: body),
             let model = Self.extractModel(from: request.body)
         else {
             return
         }
 
-        let cost = (try? DeepSeekPricing.current.estimateCostUSD(model: model, usage: usage)) ?? .zero
+        let cost = (try? DeepSeekPricing.current.estimateCostUSD(model: model, usage: usage, at: startedAt)) ?? .zero
         let durationMS = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
         let event = UsageEvent(
             timestamp: startedAt,
@@ -118,6 +118,13 @@ public actor LocalProxyServer {
         )
 
         await usageRecorder(event)
+    }
+
+    private nonisolated static func extractUsage(from body: Data) -> TokenUsage? {
+        if let usage = try? DeepSeekProvider.extractUsage(fromNonStreamingBody: body) {
+            return usage
+        }
+        return try? DeepSeekProvider.extractUsage(fromStreamingBody: body)
     }
 
     private nonisolated static func extractModel(from body: Data?) -> String? {

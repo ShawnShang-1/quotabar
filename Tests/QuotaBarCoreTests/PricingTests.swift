@@ -11,11 +11,14 @@ import Testing
         completionTokens: 1_000_000
     )
 
-    #expect(cost == Decimal(string: "0.448"))
+    #expect(cost == Decimal(string: "0.4228"))
 }
 
 @Test func discountedV4ProPricingComputesCostFromCacheHitMissAndOutputTokens() throws {
-    let pricing = try DeepSeekPricing.pricing(for: "deepseek-v4-pro")
+    let pricing = try DeepSeekPricing.pricing(
+        for: "deepseek-v4-pro",
+        at: Date(timeIntervalSince1970: 1_778_688_000)
+    )
 
     let cost = pricing.costUSD(
         promptCacheHitTokens: 1_000_000,
@@ -23,7 +26,22 @@ import Testing
         completionTokens: 1_000_000
     )
 
-    #expect(cost == Decimal(string: "5.365"))
+    #expect(cost == Decimal(string: "1.308625"))
+}
+
+@Test func v4ProPricingUsesStandardRatesAfterTemporaryDiscountExpires() throws {
+    let pricing = try DeepSeekPricing.pricing(
+        for: "deepseek-v4-pro",
+        at: Date(timeIntervalSince1970: 1_780_249_600)
+    )
+
+    let cost = pricing.costUSD(
+        promptCacheHitTokens: 1_000_000,
+        promptCacheMissTokens: 1_000_000,
+        completionTokens: 1_000_000
+    )
+
+    #expect(cost == Decimal(string: "5.2345"))
 }
 
 @Test func legacyDeepSeekModelNamesUseV4FlashPricing() throws {

@@ -15,7 +15,7 @@ import Testing
         usage: usage
     )
 
-    #expect(cost == Decimal(string: "0.001148")!)
+    #expect(cost == Decimal(string: "0.0011228")!)
 }
 
 @Test func deepSeekReasonerAliasUsesV4FlashRates() throws {
@@ -31,7 +31,7 @@ import Testing
         usage: usage
     )
 
-    #expect(cost == Decimal(string: "0.002352")!)
+    #expect(cost == Decimal(string: "0.0022512")!)
 }
 
 @Test func unknownModelThrowsInsteadOfGuessingPricing() throws {

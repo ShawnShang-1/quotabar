@@ -24,7 +24,7 @@ import Testing
     #expect(summary.promptCacheMissTokens == 100_000)
     #expect(summary.completionTokens == 100_000)
     #expect(summary.totalTokens == 1_200_000)
-    #expect(summary.totalCostUSD == Decimal(string: "0.07"))
+    #expect(summary.totalCostUSD == Decimal(string: "0.0448"))
 }
 
 @Test func aggregationGroupsUsageByCanonicalModel() throws {

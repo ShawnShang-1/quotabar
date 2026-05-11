@@ -18,6 +18,14 @@ struct MenuBarDashboardView: View {
         )
     }
 
+    private var monthTotalTokens: Int {
+        appState.monthlyTrend.reduce(0) { $0 + $1.totalTokens }
+    }
+
+    private var monthTotalCostUSD: Decimal {
+        appState.monthlyTrend.reduce(Decimal.zero) { $0 + $1.totalCostUSD }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -68,6 +76,11 @@ struct MenuBarDashboardView: View {
             }
 
             chartSection(title: "Monthly cost trend") {
+                Text("Month \(monthTotalCostUSD.usdText) · \(monthTotalTokens.formatted(.number.notation(.compactName))) tok")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
                 Chart(appState.monthlyTrend) { item in
                     BarMark(
                         x: .value("Day", item.day),
@@ -137,7 +150,7 @@ struct MenuBarDashboardView: View {
                 .buttonStyle(.borderless)
                 .help("Refresh DeepSeek balance")
 
-                Text("Today \(appState.todaySummary.totalCostUSD.usdText)")
+                Text("Today \(appState.todaySummary.totalCostUSD.usdText) · \(appState.todaySummary.totalTokens.formatted(.number.notation(.compactName))) tok")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()

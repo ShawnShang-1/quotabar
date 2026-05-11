@@ -46,7 +46,7 @@ final class AppState: ObservableObject {
         settingsStore: PersistentSettingsStore = PersistentSettingsStore(),
         balanceSummary: BalanceSummary = .preview,
         settings: QuotaSettings? = nil,
-        memoryEvents: [UsageEvent] = UsageEvent.previewEvents
+        memoryEvents: [UsageEvent] = []
     ) {
         self.keychain = keychain
         self.settingsStore = settingsStore
@@ -116,6 +116,7 @@ final class AppState: ObservableObject {
 
     func attachModelContext(_ modelContext: ModelContext) {
         self.modelContext = modelContext
+        flushMemoryEventsToLedgerIfNeeded()
         reloadLedger()
     }
 
@@ -269,16 +270,41 @@ final class AppState: ObservableObject {
     }
 
     private func record(_ event: UsageEvent) {
-        memoryEvents.append(event)
         if let modelContext {
-            modelContext.insert(UsageLedgerEntry(event: event))
-            try? modelContext.save()
+            do {
+                modelContext.insert(UsageLedgerEntry(event: event))
+                try modelContext.save()
+            } catch {
+                memoryEvents.append(event)
+                lastErrorMessage = error.localizedDescription
+            }
+        } else {
+            memoryEvents.append(event)
         }
         rebuildSnapshots(from: currentEvents())
     }
 
     private func reloadLedger() {
         rebuildSnapshots(from: currentEvents())
+    }
+
+    private func flushMemoryEventsToLedgerIfNeeded() {
+        guard let modelContext, !memoryEvents.isEmpty else {
+            return
+        }
+
+        do {
+            let persistedEntries = try modelContext.fetch(FetchDescriptor<UsageLedgerEntry>())
+            let persistedIDs = Set(persistedEntries.map(\.id))
+            for event in memoryEvents where !persistedIDs.contains(event.id) {
+                modelContext.insert(UsageLedgerEntry(event: event))
+            }
+            try modelContext.save()
+            memoryEvents.removeAll()
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
     }
 
     private func currentEvents() -> [UsageEvent] {
@@ -291,7 +317,9 @@ final class AppState: ObservableObject {
                 sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
             )
             let persistedEvents = try modelContext.fetch(descriptor).compactMap(\.usageEvent)
-            return persistedEvents
+            let persistedIDs = Set(persistedEvents.map(\.id))
+            let pendingEvents = memoryEvents.filter { !persistedIDs.contains($0.id) }
+            return persistedEvents + pendingEvents
         } catch {
             lastErrorMessage = error.localizedDescription
             return memoryEvents

@@ -43,7 +43,7 @@ public struct DeepSeekProvider: Sendable {
 
         var request = URLRequest(url: url)
         request.httpMethod = incoming.method.rawValue
-        request.httpBody = incoming.body
+        request.httpBody = Self.bodyRequestingUsageWhenStreaming(incoming.body)
         copyForwardableHeaders(from: incoming, to: &request)
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         return request
@@ -113,6 +113,33 @@ public struct DeepSeekProvider: Sendable {
         }
     }
 
+    public static func extractUsage(fromStreamingBody body: Data) throws -> TokenUsage? {
+        guard let text = String(data: body, encoding: .utf8) else {
+            throw Error.invalidUsagePayload
+        }
+
+        var latestUsage: TokenUsage?
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.hasPrefix("data:") else {
+                continue
+            }
+
+            let payload = line
+                .dropFirst("data:".count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard payload != "[DONE]", let payloadData = payload.data(using: .utf8) else {
+                continue
+            }
+
+            if let usage = try? extractUsage(fromNonStreamingBody: payloadData) {
+                latestUsage = usage
+            }
+        }
+
+        return latestUsage
+    }
+
     public static func parseBalance(from body: Data) throws -> DeepSeekBalance {
         do {
             return try JSONDecoder().decode(DeepSeekBalance.self, from: body)
@@ -129,6 +156,22 @@ public struct DeepSeekProvider: Sendable {
             }
             request.setValue(value, forHTTPHeaderField: name)
         }
+    }
+
+    private static func bodyRequestingUsageWhenStreaming(_ body: Data?) -> Data? {
+        guard
+            let body,
+            var payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+            payload["stream"] as? Bool == true
+        else {
+            return body
+        }
+
+        var streamOptions = payload["stream_options"] as? [String: Any] ?? [:]
+        streamOptions["include_usage"] = true
+        payload["stream_options"] = streamOptions
+
+        return (try? JSONSerialization.data(withJSONObject: payload)) ?? body
     }
 
     public static func urlSessionTransport(_ request: URLRequest) async throws -> UpstreamHTTPResponse {
