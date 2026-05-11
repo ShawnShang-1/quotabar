@@ -48,9 +48,24 @@ import Testing
     let chat = try DeepSeekPricing.pricing(for: "deepseek-chat")
     let reasoner = try DeepSeekPricing.pricing(for: "deepseek-reasoner")
     let flash = try DeepSeekPricing.pricing(for: "deepseek-v4-flash")
+    let flashContext = try DeepSeekPricing.pricing(for: "deepseek-v4-flash[1m]")
 
     #expect(chat == flash)
     #expect(reasoner == flash)
+    #expect(flashContext == flash)
+}
+
+@Test func contextWindowSuffixDoesNotAffectV4ProPricing() throws {
+    let base = try DeepSeekPricing.pricing(
+        for: "deepseek-v4-pro",
+        at: Date(timeIntervalSince1970: 1_778_688_000)
+    )
+    let oneMillion = try DeepSeekPricing.pricing(
+        for: "deepseek-v4-pro[1m]",
+        at: Date(timeIntervalSince1970: 1_778_688_000)
+    )
+
+    #expect(oneMillion == base)
 }
 
 @Test func unknownModelThrowsPricingError() {

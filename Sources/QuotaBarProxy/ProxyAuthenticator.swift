@@ -19,9 +19,19 @@ public struct ProxyAuthenticator: Sendable {
             return .authorized
         }
 
-        guard let authorization = headers.first(where: {
+        let apiKeyMatches = headers.first(where: {
+            $0.key.caseInsensitiveCompare("x-api-key") == .orderedSame
+        })?.value == requiredBearerToken
+
+        let authorization = headers.first(where: {
             $0.key.caseInsensitiveCompare("Authorization") == .orderedSame
-        })?.value else {
+        })?.value
+
+        if apiKeyMatches {
+            return .authorized
+        }
+
+        guard let authorization else {
             return .missingAuthorization
         }
 

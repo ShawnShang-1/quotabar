@@ -25,6 +25,44 @@ final class DeepSeekProviderTests: XCTestCase {
         XCTAssertEqual(request.httpBody, incoming.body)
     }
 
+    func testBuildsAnthropicMessagesRequestWithDeepSeekAPIKeyHeader() throws {
+        let provider = DeepSeekProvider(apiKey: "deepseek-key")
+        let incoming = ProxyHTTPRequest(
+            method: .post,
+            path: "/anthropic/v1/messages",
+            headers: [
+                "x-api-key": "local-token",
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json"
+            ],
+            body: Data(#"{"model":"deepseek-v4-pro[1m]","max_tokens":4,"messages":[{"role":"user","content":"hi"}]}"#.utf8)
+        )
+
+        let request = try provider.makeUpstreamRequest(for: incoming)
+
+        XCTAssertEqual(request.url?.absoluteString, "https://api.deepseek.com/anthropic/v1/messages")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "x-api-key"), "deepseek-key")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), nil)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "anthropic-version"), "2023-06-01")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(request.httpBody, incoming.body)
+    }
+
+    func testBuildsAnthropicMessagesRequestFromShortLocalPath() throws {
+        let provider = DeepSeekProvider(apiKey: "deepseek-key")
+        let incoming = ProxyHTTPRequest(
+            method: .post,
+            path: "/anthropic/messages",
+            headers: ["x-api-key": "local-token"],
+            body: Data(#"{"model":"deepseek-v4-flash[1m]","messages":[]}"#.utf8)
+        )
+
+        let request = try provider.makeUpstreamRequest(for: incoming)
+
+        XCTAssertEqual(request.url?.absoluteString, "https://api.deepseek.com/anthropic/v1/messages")
+    }
+
     func testStreamingChatCompletionRequestsAskDeepSeekToIncludeUsage() throws {
         let provider = DeepSeekProvider(apiKey: "deepseek-key")
         let incoming = ProxyHTTPRequest(
@@ -114,6 +152,62 @@ final class DeepSeekProviderTests: XCTestCase {
         )
 
         let usage = try DeepSeekProvider.extractUsage(fromStreamingBody: body)
+
+        XCTAssertEqual(
+            usage,
+            TokenUsage(
+                inputTokens: 12,
+                outputTokens: 7,
+                cacheHitInputTokens: 4,
+                cacheMissInputTokens: 8
+            )
+        )
+    }
+
+    func testExtractsUsageFromAnthropicMessagesResponse() throws {
+        let body = Data(
+            """
+            {
+              "id": "msg_1",
+              "type": "message",
+              "usage": {
+                "input_tokens": 12,
+                "output_tokens": 7,
+                "cache_read_input_tokens": 4
+              }
+            }
+            """.utf8
+        )
+
+        let usage = try DeepSeekProvider.extractUsage(fromAnthropicBody: body)
+
+        XCTAssertEqual(
+            usage,
+            TokenUsage(
+                inputTokens: 12,
+                outputTokens: 7,
+                cacheHitInputTokens: 4,
+                cacheMissInputTokens: 8
+            )
+        )
+    }
+
+    func testExtractsUsageFromAnthropicStreamingEvents() throws {
+        let body = Data(
+            """
+            event: message_start
+            data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":12,"output_tokens":0,"cache_read_input_tokens":4}}}
+
+            event: message_delta
+            data: {"type":"message_delta","usage":{"output_tokens":7}}
+
+            event: message_stop
+            data: {"type":"message_stop"}
+
+            """.utf8
+        )
+
+        let usage = try DeepSeekProvider.extractUsage(fromAnthropicStreamingBody: body)
 
         XCTAssertEqual(
             usage,

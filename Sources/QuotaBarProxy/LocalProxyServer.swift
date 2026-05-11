@@ -124,6 +124,12 @@ public actor LocalProxyServer {
         if let usage = try? DeepSeekProvider.extractUsage(fromNonStreamingBody: body) {
             return usage
         }
+        if let usage = try? DeepSeekProvider.extractUsage(fromAnthropicBody: body) {
+            return usage
+        }
+        if let usage = try? DeepSeekProvider.extractUsage(fromAnthropicStreamingBody: body) {
+            return usage
+        }
         return try? DeepSeekProvider.extractUsage(fromStreamingBody: body)
     }
 

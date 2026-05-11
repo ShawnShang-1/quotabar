@@ -64,7 +64,7 @@ public struct DeepSeekPricing: Sendable {
     public init() {}
 
     public static func pricing(for model: String, at date: Date = .now) throws -> DeepSeekModelPricing {
-        switch model {
+        switch baseModelName(for: model) {
         case "deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash":
             v4Flash
         case "deepseek-v4-pro":
@@ -85,5 +85,12 @@ public struct DeepSeekPricing: Sendable {
 
     public static func canonicalModel(for model: String, at date: Date = .now) throws -> String {
         try pricing(for: model, at: date).canonicalModel
+    }
+
+    private static func baseModelName(for model: String) -> String {
+        guard let suffixStart = model.lastIndex(of: "["), model.hasSuffix("]") else {
+            return model
+        }
+        return String(model[..<suffixStart])
     }
 }

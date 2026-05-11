@@ -34,18 +34,23 @@ public struct DeepSeekProvider: Sendable {
         guard incoming.method == .post else {
             throw Error.unsupportedMethod
         }
-        guard incoming.path == "/v1/chat/completions" else {
+        guard let route = Route(path: incoming.path) else {
             throw Error.unsupportedRoute
         }
-        guard let url = URL(string: incoming.path, relativeTo: baseURL)?.absoluteURL else {
+        guard let url = URL(string: route.upstreamPath, relativeTo: baseURL)?.absoluteURL else {
             throw Error.invalidUpstreamURL
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = incoming.method.rawValue
-        request.httpBody = Self.bodyRequestingUsageWhenStreaming(incoming.body)
+        request.httpBody = route == .openAIChatCompletions ? Self.bodyRequestingUsageWhenStreaming(incoming.body) : incoming.body
         copyForwardableHeaders(from: incoming, to: &request)
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        switch route {
+        case .openAIChatCompletions:
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        case .anthropicMessages:
+            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        }
         return request
     }
 
@@ -140,6 +145,53 @@ public struct DeepSeekProvider: Sendable {
         return latestUsage
     }
 
+    public static func extractUsage(fromAnthropicBody body: Data) throws -> TokenUsage? {
+        do {
+            return try JSONDecoder().decode(AnthropicUsageEnvelope.self, from: body).usage?.tokenUsage
+        } catch {
+            throw Error.invalidUsagePayload
+        }
+    }
+
+    public static func extractUsage(fromAnthropicStreamingBody body: Data) throws -> TokenUsage? {
+        guard let text = String(data: body, encoding: .utf8) else {
+            throw Error.invalidUsagePayload
+        }
+
+        var aggregate = AnthropicUsage()
+        var hasUsage = false
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.hasPrefix("data:") else {
+                continue
+            }
+
+            let payload = line
+                .dropFirst("data:".count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let payloadData = payload.data(using: .utf8) else {
+                continue
+            }
+
+            if let envelope = try? JSONDecoder().decode(AnthropicUsageEnvelope.self, from: payloadData),
+               let usage = envelope.usage,
+               usage.hasKnownTokenField {
+                aggregate.merge(usage)
+                hasUsage = true
+                continue
+            }
+
+            if let envelope = try? JSONDecoder().decode(AnthropicMessageStartEnvelope.self, from: payloadData),
+               let usage = envelope.message.usage,
+               usage.hasKnownTokenField {
+                aggregate.merge(usage)
+                hasUsage = true
+            }
+        }
+
+        return hasUsage ? aggregate.tokenUsage : nil
+    }
+
     public static func parseBalance(from body: Data) throws -> DeepSeekBalance {
         do {
             return try JSONDecoder().decode(DeepSeekBalance.self, from: body)
@@ -149,7 +201,7 @@ public struct DeepSeekProvider: Sendable {
     }
 
     private func copyForwardableHeaders(from incoming: ProxyHTTPRequest, to request: inout URLRequest) {
-        let blockedHeaders = Set(["authorization", "host", "content-length", "connection"])
+        let blockedHeaders = Set(["authorization", "x-api-key", "host", "content-length", "connection"])
         for (name, value) in incoming.headers {
             guard !blockedHeaders.contains(name.lowercased()) else {
                 continue
@@ -187,6 +239,85 @@ public struct DeepSeekProvider: Sendable {
             } ?? [:],
             body: body
         )
+    }
+}
+
+private enum Route: Equatable {
+    case openAIChatCompletions
+    case anthropicMessages
+
+    init?(path: String) {
+        switch path {
+        case "/v1/chat/completions":
+            self = .openAIChatCompletions
+        case "/anthropic/v1/messages", "/anthropic/messages":
+            self = .anthropicMessages
+        default:
+            return nil
+        }
+    }
+
+    var upstreamPath: String {
+        switch self {
+        case .openAIChatCompletions:
+            "/v1/chat/completions"
+        case .anthropicMessages:
+            "/anthropic/v1/messages"
+        }
+    }
+}
+
+private struct AnthropicUsageEnvelope: Decodable {
+    var usage: AnthropicUsage?
+}
+
+private struct AnthropicMessageStartEnvelope: Decodable {
+    var message: Message
+
+    struct Message: Decodable {
+        var usage: AnthropicUsage?
+    }
+}
+
+private struct AnthropicUsage: Decodable {
+    var inputTokens: Int?
+    var outputTokens: Int?
+    var cacheReadInputTokens: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case inputTokens = "input_tokens"
+        case outputTokens = "output_tokens"
+        case cacheReadInputTokens = "cache_read_input_tokens"
+    }
+
+    init(inputTokens: Int? = nil, outputTokens: Int? = nil, cacheReadInputTokens: Int? = nil) {
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cacheReadInputTokens = cacheReadInputTokens
+    }
+
+    mutating func merge(_ usage: AnthropicUsage) {
+        if let inputTokens = usage.inputTokens {
+            self.inputTokens = max(self.inputTokens ?? 0, inputTokens)
+        }
+        if let outputTokens = usage.outputTokens {
+            self.outputTokens = max(self.outputTokens ?? 0, outputTokens)
+        }
+        if let cacheReadInputTokens = usage.cacheReadInputTokens {
+            self.cacheReadInputTokens = max(self.cacheReadInputTokens ?? 0, cacheReadInputTokens)
+        }
+    }
+
+    var tokenUsage: TokenUsage {
+        TokenUsage(
+            inputTokens: inputTokens ?? 0,
+            outputTokens: outputTokens ?? 0,
+            cacheHitInputTokens: cacheReadInputTokens ?? 0
+        )
+    }
+
+    var hasKnownTokenField: Bool {
+        inputTokens != nil || outputTokens != nil || cacheReadInputTokens != nil
     }
 }
 

@@ -11,6 +11,27 @@ final class ProxyAuthenticatorTests: XCTestCase {
         )
     }
 
+    func testAllowsMatchingAnthropicAPIKeyHeader() {
+        let authenticator = ProxyAuthenticator(requiredBearerToken: "local-secret")
+
+        XCTAssertEqual(
+            authenticator.authenticate(headers: ["x-api-key": "local-secret"]),
+            .authorized
+        )
+    }
+
+    func testAllowsMatchingBearerTokenWhenIncorrectAPIKeyHeaderIsAlsoPresent() {
+        let authenticator = ProxyAuthenticator(requiredBearerToken: "local-secret")
+
+        XCTAssertEqual(
+            authenticator.authenticate(headers: [
+                "x-api-key": "stale-secret",
+                "Authorization": "Bearer local-secret"
+            ]),
+            .authorized
+        )
+    }
+
     func testRejectsMissingBearerTokenWhenRequired() {
         let authenticator = ProxyAuthenticator(requiredBearerToken: "local-secret")
 
