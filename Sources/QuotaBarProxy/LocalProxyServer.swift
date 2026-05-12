@@ -30,6 +30,7 @@ public actor LocalProxyServer {
     private let configuration: Configuration
     private let authenticator: ProxyAuthenticator
     private let provider: DeepSeekProvider
+    private let costEstimator: @Sendable (String, TokenUsage, Date) throws -> Decimal
     private let usageRecorder: (@Sendable (UsageEvent) async -> Void)?
     private var listenerFileDescriptor: CInt = -1
     private var listenerSource: DispatchSourceRead?
@@ -38,11 +39,15 @@ public actor LocalProxyServer {
         configuration: Configuration = Configuration(),
         authenticator: ProxyAuthenticator,
         provider: DeepSeekProvider,
+        costEstimator: @escaping @Sendable (String, TokenUsage, Date) throws -> Decimal = { model, usage, date in
+            try DeepSeekPricing.current.estimateCostUSD(model: model, usage: usage, at: date)
+        },
         usageRecorder: (@Sendable (UsageEvent) async -> Void)? = nil
     ) {
         self.configuration = configuration
         self.authenticator = authenticator
         self.provider = provider
+        self.costEstimator = costEstimator
         self.usageRecorder = usageRecorder
     }
 
@@ -103,7 +108,7 @@ public actor LocalProxyServer {
             return
         }
 
-        let cost = (try? DeepSeekPricing.current.estimateCostUSD(model: model, usage: usage, at: startedAt)) ?? .zero
+        let cost = max(.zero, (try? costEstimator(model, usage, startedAt)) ?? .zero)
         let durationMS = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
         let event = UsageEvent(
             timestamp: startedAt,

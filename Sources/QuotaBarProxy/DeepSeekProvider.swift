@@ -309,10 +309,13 @@ private struct AnthropicUsage: Decodable {
     }
 
     var tokenUsage: TokenUsage {
-        TokenUsage(
-            inputTokens: inputTokens ?? 0,
+        let cacheHitTokens = cacheReadInputTokens ?? 0
+        let cacheMissTokens = inputTokens ?? 0
+        return TokenUsage(
+            inputTokens: cacheHitTokens + cacheMissTokens,
             outputTokens: outputTokens ?? 0,
-            cacheHitInputTokens: cacheReadInputTokens ?? 0
+            cacheHitInputTokens: cacheHitTokens,
+            cacheMissInputTokens: cacheMissTokens
         )
     }
 

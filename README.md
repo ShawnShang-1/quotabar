@@ -9,7 +9,7 @@ QuotaBar is a macOS 26 SwiftUI menu bar app for tracking DeepSeek API balance an
 - Local Anthropic-compatible DeepSeek proxy at `http://127.0.0.1:<port>/anthropic`.
 - DeepSeek API key stored in macOS Keychain.
 - Caller-facing bearer token so clients do not need the real DeepSeek key.
-- Persistent settings for proxy port/token, auto-start, refresh interval, budgets, and alert thresholds.
+- Persistent settings for proxy port/token, auto-start, refresh interval, budgets, alert thresholds, and DeepSeek CNY pricing.
 - Automatic startup restore: QuotaBar can restart the local proxy and refresh balance when the app opens.
 - `/v1/chat/completions` and `/anthropic/v1/messages` forwarding to DeepSeek.
 - OpenAI-compatible and Anthropic Messages usage metadata capture into a SwiftData-friendly local ledger.
@@ -79,6 +79,6 @@ Do not put the real DeepSeek key in CC Switch when routing through QuotaBar. Put
 
 - DeepSeek only.
 - Supported proxy routes: `POST /v1/chat/completions`, `POST /anthropic/v1/messages`, and the short local alias `POST /anthropic/messages`.
-- Pricing uses current DeepSeek USD token pricing for `deepseek-v4-flash` and `deepseek-v4-pro`; `deepseek-chat` and `deepseek-reasoner` map to `deepseek-v4-flash`.
+- Pricing defaults to DeepSeek CNY token pricing for `deepseek-v4-flash` and discounted `deepseek-v4-pro`; these rates can be edited in Settings.
 - Local app bundle is unsigned and not notarized.
 - Future provider types such as Anthropic, Codex, or window quota plans should implement the core provider capability model rather than changing dashboard code directly.

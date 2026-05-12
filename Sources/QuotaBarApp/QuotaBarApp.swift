@@ -26,6 +26,9 @@ struct QuotaBarApp: App {
             MenuBarDashboardView(appState: appState, alertManager: alertManager)
         } label: {
             Label(appState.statusTitle, systemImage: "chart.bar.xaxis")
+                .task {
+                    await appState.bootstrap()
+                }
         }
         .menuBarExtraStyle(.window)
         .modelContainer(modelContainer)

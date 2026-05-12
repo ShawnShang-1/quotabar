@@ -26,6 +26,10 @@ struct MenuBarDashboardView: View {
         appState.monthlyTrend.reduce(Decimal.zero) { $0 + $1.totalCostUSD }
     }
 
+    private var monthChartYMax: Double {
+        max(1, appState.monthlyTrend.map { $0.totalCostUSD.doubleValue }.max() ?? 0)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -34,7 +38,7 @@ struct MenuBarDashboardView: View {
                 HStack {
                     Text("Daily spend")
                     Spacer()
-                    Text("\(appState.todaySummary.totalCostUSD.usdText) / \(appState.settings.dailyBudgetUSD.usdText)")
+                    Text("\(appState.todaySummary.totalCostUSD.cnyText) / \(appState.settings.dailyBudgetUSD.cnyText)")
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
@@ -52,7 +56,7 @@ struct MenuBarDashboardView: View {
                     .annotation(position: .trailing, alignment: .leading) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(item.totalTokens, format: .number.notation(.compactName))
-                            Text(item.totalCostUSD.usdText)
+                            Text(item.totalCostUSD.cnyText)
                         }
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -76,7 +80,7 @@ struct MenuBarDashboardView: View {
             }
 
             chartSection(title: "Monthly cost trend") {
-                Text("Month \(monthTotalCostUSD.usdText) · \(monthTotalTokens.formatted(.number.notation(.compactName))) tok")
+                Text("Month \(monthTotalCostUSD.cnyText) · \(monthTotalTokens.formatted(.number.notation(.compactName))) tok")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -100,6 +104,7 @@ struct MenuBarDashboardView: View {
                         AxisValueLabel()
                     }
                 }
+                .chartYScale(domain: 0...monthChartYMax)
                 .frame(height: 112)
             }
 
@@ -131,9 +136,6 @@ struct MenuBarDashboardView: View {
                     .font(.title3)
                     .fontWeight(.semibold)
                     .monospacedDigit()
-                Text(appState.balanceSummary.isAvailable ? "DeepSeek available" : "DeepSeek unavailable")
-                    .font(.caption)
-                    .foregroundStyle(appState.balanceSummary.isAvailable ? Color.secondary : Color.red)
             }
 
             Spacer()
@@ -150,7 +152,7 @@ struct MenuBarDashboardView: View {
                 .buttonStyle(.borderless)
                 .help("Refresh DeepSeek balance")
 
-                Text("Today \(appState.todaySummary.totalCostUSD.usdText) · \(appState.todaySummary.totalTokens.formatted(.number.notation(.compactName))) tok")
+                Text("Today \(appState.todaySummary.totalCostUSD.cnyText) · \(appState.todaySummary.totalTokens.formatted(.number.notation(.compactName))) tok")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -168,10 +170,10 @@ struct MenuBarDashboardView: View {
                 Spacer()
 
                 SettingsLink {
-                    Label("Settings", systemImage: "gearshape")
+                    Label("设置", systemImage: "gearshape")
                 }
 
-                Button("Quit") {
+                Button("退出") {
                     NSApplication.shared.terminate(nil)
                 }
             }

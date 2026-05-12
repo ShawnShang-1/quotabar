@@ -16,10 +16,12 @@ public struct TokenUsage: Codable, Equatable, Sendable {
         cacheHitInputTokens: Int? = nil,
         cacheMissInputTokens: Int? = nil
     ) {
-        self.inputTokens = inputTokens
-        self.outputTokens = outputTokens
-        self.cacheHitInputTokens = cacheHitInputTokens ?? 0
-        self.cacheMissInputTokens = cacheMissInputTokens ?? inputTokens - self.cacheHitInputTokens
+        let cacheHitInputTokens = max(0, cacheHitInputTokens ?? 0)
+        let cacheMissInputTokens = max(0, cacheMissInputTokens ?? inputTokens - cacheHitInputTokens)
+        self.inputTokens = max(0, max(inputTokens, cacheHitInputTokens + cacheMissInputTokens))
+        self.outputTokens = max(0, outputTokens)
+        self.cacheHitInputTokens = cacheHitInputTokens
+        self.cacheMissInputTokens = cacheMissInputTokens
     }
 
     public init(promptTokens: Int, completionTokens: Int, totalTokens _: Int) {

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import QuotaBarCore
 
-@Test func v4FlashPricingComputesCostFromCacheHitMissAndOutputTokens() throws {
+@Test func v4FlashPricingComputesCNYCostFromCacheHitMissAndOutputTokens() throws {
     let pricing = try DeepSeekPricing.pricing(for: "deepseek-v4-flash")
 
     let cost = pricing.costUSD(
@@ -11,10 +11,10 @@ import Testing
         completionTokens: 1_000_000
     )
 
-    #expect(cost == Decimal(string: "0.4228"))
+    #expect(cost == Decimal(string: "3.02"))
 }
 
-@Test func discountedV4ProPricingComputesCostFromCacheHitMissAndOutputTokens() throws {
+@Test func discountedV4ProPricingComputesCNYCostFromCacheHitMissAndOutputTokens() throws {
     let pricing = try DeepSeekPricing.pricing(
         for: "deepseek-v4-pro",
         at: Date(timeIntervalSince1970: 1_778_688_000)
@@ -26,7 +26,7 @@ import Testing
         completionTokens: 1_000_000
     )
 
-    #expect(cost == Decimal(string: "1.308625"))
+    #expect(cost == Decimal(string: "9.025"))
 }
 
 @Test func v4ProPricingUsesStandardRatesAfterTemporaryDiscountExpires() throws {
@@ -41,7 +41,36 @@ import Testing
         completionTokens: 1_000_000
     )
 
-    #expect(cost == Decimal(string: "5.2345"))
+    #expect(cost == Decimal(string: "36.1"))
+}
+
+@Test func customPricingCatalogOverridesV4FlashAndProRates() throws {
+    let catalog = DeepSeekPricingCatalog(
+        v4Flash: DeepSeekModelPricing(
+            canonicalModel: "deepseek-v4-flash",
+            cacheHitInputUSDPerMillion: Decimal(string: "0.20")!,
+            cacheMissInputUSDPerMillion: Decimal(string: "10")!,
+            outputUSDPerMillion: Decimal(string: "20")!
+        ),
+        v4Pro: DeepSeekModelPricing(
+            canonicalModel: "deepseek-v4-pro",
+            cacheHitInputUSDPerMillion: Decimal(string: "0.25")!,
+            cacheMissInputUSDPerMillion: Decimal(string: "30")!,
+            outputUSDPerMillion: Decimal(string: "60")!
+        )
+    )
+
+    let flashCost = try catalog.estimateCostUSD(
+        model: "deepseek-v4-flash[1m]",
+        usage: TokenUsage(inputTokens: 2_000_000, outputTokens: 1_000_000, cacheHitInputTokens: 1_000_000)
+    )
+    let proCost = try catalog.estimateCostUSD(
+        model: "deepseek-v4-pro[1m]",
+        usage: TokenUsage(inputTokens: 2_000_000, outputTokens: 1_000_000, cacheHitInputTokens: 1_000_000)
+    )
+
+    #expect(flashCost == Decimal(string: "30.20"))
+    #expect(proCost == Decimal(string: "90.25"))
 }
 
 @Test func legacyDeepSeekModelNamesUseV4FlashPricing() throws {

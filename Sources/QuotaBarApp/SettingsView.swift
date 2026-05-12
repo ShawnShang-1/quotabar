@@ -1,3 +1,4 @@
+import QuotaBarCore
 import SwiftData
 import SwiftUI
 
@@ -24,19 +25,19 @@ struct SettingsView: View {
 
                     Spacer()
 
-                    Text(appState.settings.hasDeepSeekAPIKey ? "Configured" : "Missing")
+                    Text(appState.settings.hasDeepSeekAPIKey ? "已配置" : "缺失")
                         .foregroundStyle(appState.settings.hasDeepSeekAPIKey ? Color.secondary : Color.red)
                 }
 
                 HStack {
-                    Text("Balance")
+                    Text("余额")
                     Spacer()
                     Text(appState.balanceSummary.shortBalanceText)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
 
-                Button("Refresh Balance") {
+                Button("刷新余额") {
                     Task {
                         await appState.refreshBalance()
                     }
@@ -44,13 +45,13 @@ struct SettingsView: View {
                 .disabled(!appState.settings.hasDeepSeekAPIKey)
             }
 
-            Section("Local Proxy") {
-                TextField("Port", value: $appState.settings.proxyPort, format: .number)
+            Section("本机代理") {
+                TextField("端口", value: $appState.settings.proxyPort, format: .number)
 
-                TextField("Bearer token", text: $appState.settings.proxyBearerToken)
+                TextField("本机 Bearer token", text: $appState.settings.proxyBearerToken)
                     .textSelection(.enabled)
 
-                Toggle("Start proxy when QuotaBar opens", isOn: $appState.settings.autoStartProxy)
+                Toggle("QuotaBar 打开时自动启动代理", isOn: $appState.settings.autoStartProxy)
 
                 HStack {
                     Text("Base URL")
@@ -62,37 +63,37 @@ struct SettingsView: View {
                 }
 
                 if appState.proxyStatus == .needsRestart {
-                    Text("Restart the proxy to apply the new port or bearer token.")
+                    Text("端口、token 或价格已变更，重启代理后生效。")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
 
                 HStack {
-                    Button("Copy URL") {
+                    Button("复制 URL") {
                         appState.copyProxyBaseURLToPasteboard()
                     }
 
-                    Button("Copy Token") {
+                    Button("复制 Token") {
                         appState.copyProxyBearerTokenToPasteboard()
                     }
                 }
 
                 HStack {
-                    Button("Start Proxy") {
+                    Button("启动代理") {
                         Task {
                             await appState.startProxy()
                         }
                     }
                     .disabled(!appState.settings.hasDeepSeekAPIKey)
 
-                    Button("Restart") {
+                    Button("重启") {
                         Task {
                             await appState.restartProxy()
                         }
                     }
                     .disabled(!appState.settings.hasDeepSeekAPIKey)
 
-                    Button("Stop Proxy") {
+                    Button("停止代理") {
                         Task {
                             await appState.stopProxy()
                         }
@@ -105,15 +106,15 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Budgets & Alerts") {
+            Section("预算与提醒") {
                 TextField(
-                    "Daily budget USD",
+                    "每日预算 CNY",
                     value: $appState.settings.dailyBudgetUSD,
                     format: .number.precision(.fractionLength(2))
                 )
 
                 TextField(
-                    "Low balance threshold",
+                    "低余额阈值 CNY",
                     value: $appState.settings.lowBalanceThreshold,
                     format: .number.precision(.fractionLength(2))
                 )
@@ -123,30 +124,30 @@ struct SettingsView: View {
                     in: 1.25...5,
                     step: 0.25
                 ) {
-                    Text("Spike multiplier")
+                    Text("突增倍数")
                 } minimumValueLabel: {
                     Text("1.25x")
                 } maximumValueLabel: {
                     Text("5x")
                 }
 
-                Toggle("Usage notifications", isOn: $appState.settings.notificationsEnabled)
+                Toggle("用量通知", isOn: $appState.settings.notificationsEnabled)
 
                 Stepper(
-                    "Refresh every \(appState.settings.refreshIntervalSeconds / 60) min",
+                    "每 \(appState.settings.refreshIntervalSeconds / 60) 分钟刷新",
                     value: $appState.settings.refreshIntervalSeconds,
                     in: 60...3600,
                     step: 60
                 )
 
                 HStack {
-                    Text("Permission")
+                    Text("通知权限")
                     Spacer()
                     Text(notificationStateText)
                         .foregroundStyle(.secondary)
                 }
 
-                Button("Request Permission") {
+                Button("请求通知权限") {
                     Task {
                         await alertManager.requestAuthorization()
                     }
@@ -154,32 +155,43 @@ struct SettingsView: View {
                 .disabled(alertManager.authorizationState == .authorized)
             }
 
-            Section("Ledger") {
-                TextField("Model filter", text: $appState.ledgerModelFilter)
-                TextField("Client filter", text: $appState.ledgerClientFilter)
-                TextField("Status filter, comma-separated", text: $appState.ledgerStatusFilter)
+            Section("DeepSeek 价格（CNY / 百万 tokens）") {
+                pricingFields(
+                    title: "V4 Flash",
+                    pricing: $appState.settings.deepSeekPricing.v4Flash
+                )
+                pricingFields(
+                    title: "V4 Pro",
+                    pricing: $appState.settings.deepSeekPricing.v4Pro
+                )
+            }
+
+            Section("账本") {
+                TextField("模型过滤", text: $appState.ledgerModelFilter)
+                TextField("调用方过滤", text: $appState.ledgerClientFilter)
+                TextField("状态码过滤，用逗号分隔", text: $appState.ledgerStatusFilter)
 
                 HStack {
-                    Button("Export CSV") {
+                    Button("导出 CSV") {
                         appState.exportLedgerCSV()
                     }
 
-                    Button("Export JSON") {
+                    Button("导出 JSON") {
                         appState.exportLedgerJSON()
                     }
 
-                    Button("Clear Ledger", role: .destructive) {
+                    Button("清空账本", role: .destructive) {
                         appState.clearLedger()
                     }
                 }
             }
 
-            Section("System") {
-                Toggle("Launch at login", isOn: $appState.settings.launchAtLogin)
+            Section("系统") {
+                Toggle("登录时启动", isOn: $appState.settings.launchAtLogin)
             }
 
             if let message = appState.lastErrorMessage ?? alertManager.lastErrorMessage {
-                Section("Last Error") {
+                Section("最近错误") {
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.red)
@@ -198,13 +210,40 @@ struct SettingsView: View {
     private var notificationStateText: String {
         switch alertManager.authorizationState {
         case .unknown:
-            "Not requested"
+            "未请求"
         case .denied:
-            "Denied"
+            "已拒绝"
         case .authorized:
-            "Allowed"
+            "已允许"
         case .provisional:
-            "Provisional"
+            "临时允许"
+        }
+    }
+
+    @ViewBuilder
+    private func pricingFields(title: String, pricing: Binding<DeepSeekModelPricing>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            TextField(
+                "输入（缓存命中）",
+                value: pricing.cacheHitInputUSDPerMillion,
+                format: .number.precision(.fractionLength(3))
+            )
+
+            TextField(
+                "输入（缓存未命中）",
+                value: pricing.cacheMissInputUSDPerMillion,
+                format: .number.precision(.fractionLength(3))
+            )
+
+            TextField(
+                "输出",
+                value: pricing.outputUSDPerMillion,
+                format: .number.precision(.fractionLength(3))
+            )
         }
     }
 }

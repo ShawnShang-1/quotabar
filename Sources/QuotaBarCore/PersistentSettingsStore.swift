@@ -14,6 +14,7 @@ public struct PersistentQuotaSettings: Codable, Equatable, Sendable {
     public var spikeMultiplier: Double
     public var notificationsEnabled: Bool
     public var launchAtLogin: Bool
+    public var deepSeekPricing: DeepSeekPricingCatalog
 
     public init(
         proxyPort: Int,
@@ -24,7 +25,8 @@ public struct PersistentQuotaSettings: Codable, Equatable, Sendable {
         lowBalanceThreshold: Decimal,
         spikeMultiplier: Double,
         notificationsEnabled: Bool,
-        launchAtLogin: Bool
+        launchAtLogin: Bool,
+        deepSeekPricing: DeepSeekPricingCatalog = .defaultCNY
     ) {
         self.proxyPort = proxyPort
         self.proxyBearerToken = proxyBearerToken
@@ -35,6 +37,7 @@ public struct PersistentQuotaSettings: Codable, Equatable, Sendable {
         self.spikeMultiplier = spikeMultiplier
         self.notificationsEnabled = notificationsEnabled
         self.launchAtLogin = launchAtLogin
+        self.deepSeekPricing = deepSeekPricing
     }
 
     public static let `default` = PersistentQuotaSettings(
@@ -46,8 +49,36 @@ public struct PersistentQuotaSettings: Codable, Equatable, Sendable {
         lowBalanceThreshold: Decimal(string: "20")!,
         spikeMultiplier: 2,
         notificationsEnabled: true,
-        launchAtLogin: false
+        launchAtLogin: false,
+        deepSeekPricing: .defaultCNY
     )
+
+    private enum CodingKeys: String, CodingKey {
+        case proxyPort
+        case proxyBearerToken
+        case autoStartProxy
+        case refreshIntervalSeconds
+        case dailyBudgetUSD
+        case lowBalanceThreshold
+        case spikeMultiplier
+        case notificationsEnabled
+        case launchAtLogin
+        case deepSeekPricing
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        proxyPort = try container.decode(Int.self, forKey: .proxyPort)
+        proxyBearerToken = try container.decode(String.self, forKey: .proxyBearerToken)
+        autoStartProxy = try container.decode(Bool.self, forKey: .autoStartProxy)
+        refreshIntervalSeconds = try container.decode(Int.self, forKey: .refreshIntervalSeconds)
+        dailyBudgetUSD = try container.decode(Decimal.self, forKey: .dailyBudgetUSD)
+        lowBalanceThreshold = try container.decode(Decimal.self, forKey: .lowBalanceThreshold)
+        spikeMultiplier = try container.decode(Double.self, forKey: .spikeMultiplier)
+        notificationsEnabled = try container.decode(Bool.self, forKey: .notificationsEnabled)
+        launchAtLogin = try container.decode(Bool.self, forKey: .launchAtLogin)
+        deepSeekPricing = try container.decodeIfPresent(DeepSeekPricingCatalog.self, forKey: .deepSeekPricing) ?? .defaultCNY
+    }
 }
 
 public struct PersistentSettingsStore {

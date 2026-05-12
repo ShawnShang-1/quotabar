@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import QuotaBarCore
 
-@Test func deepSeekChatAliasUsesV4FlashCostWithCacheSplit() throws {
+@Test func deepSeekChatAliasUsesV4FlashCNYCostWithCacheSplit() throws {
     let usage = TokenUsage(
         inputTokens: 3_000,
         outputTokens: 3_000,
@@ -15,10 +15,10 @@ import Testing
         usage: usage
     )
 
-    #expect(cost == Decimal(string: "0.0011228")!)
+    #expect(cost == Decimal(string: "0.00802")!)
 }
 
-@Test func deepSeekReasonerAliasUsesV4FlashRates() throws {
+@Test func deepSeekReasonerAliasUsesV4FlashCNYRates() throws {
     let usage = TokenUsage(
         inputTokens: 10_000,
         outputTokens: 5_000,
@@ -31,7 +31,7 @@ import Testing
         usage: usage
     )
 
-    #expect(cost == Decimal(string: "0.0022512")!)
+    #expect(cost == Decimal(string: "0.01608")!)
 }
 
 @Test func unknownModelThrowsInsteadOfGuessingPricing() throws {

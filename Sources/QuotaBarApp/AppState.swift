@@ -21,8 +21,16 @@ final class AppState: ObservableObject {
             if hasBootstrapped, oldValue.launchAtLogin != settings.launchAtLogin {
                 applyLaunchAtLogin(settings.launchAtLogin)
             }
-            if hasBootstrapped, proxyStatus.isRunning, oldValue.proxyPort != settings.proxyPort || oldValue.proxyBearerToken != settings.proxyBearerToken {
+            if hasBootstrapped, proxyStatus.isRunning,
+               oldValue.proxyPort != settings.proxyPort
+                || oldValue.proxyBearerToken != settings.proxyBearerToken
+                || oldValue.deepSeekPricing != settings.deepSeekPricing {
                 proxyStatus = .needsRestart
+            }
+            if hasBootstrapped, !oldValue.autoStartProxy, settings.autoStartProxy {
+                Task {
+                    await ensureAutoStartedProxyIfNeeded()
+                }
             }
         }
     }
@@ -39,6 +47,7 @@ final class AppState: ObservableObject {
     private var modelContext: ModelContext?
     private var memoryEvents: [UsageEvent]
     private var refreshTask: Task<Void, Never>?
+    private var usageRolloverTask: Task<Void, Never>?
     private var hasBootstrapped = false
 
     init(
@@ -73,10 +82,11 @@ final class AppState: ObservableObject {
 
     deinit {
         refreshTask?.cancel()
+        usageRolloverTask?.cancel()
     }
 
     var statusTitle: String {
-        "\(balanceSummary.shortBalanceText) | 今日 \(todaySummary.totalCostUSD.usdText)"
+        "\(balanceSummary.shortBalanceText) | 今日 \(todaySummary.totalCostUSD.cnyText)"
     }
 
     var proxyBaseURLText: String {
@@ -89,10 +99,10 @@ final class AppState: ObservableObject {
         let previousHours = Self.previousHoursInterval()
         let currentHourCost = events
             .filter { currentHour.contains($0.timestamp) }
-            .reduce(Decimal.zero) { $0 + $1.costUSD }
+            .reduce(Decimal.zero) { $0 + $1.normalizedCost }
         let previousCost = events
             .filter { previousHours.contains($0.timestamp) }
-            .reduce(Decimal.zero) { $0 + $1.costUSD }
+            .reduce(Decimal.zero) { $0 + $1.normalizedCost }
         let hourlyBaseline = previousCost / Decimal(24)
         let policy = UsageAlertPolicy(
             lowBalanceThreshold: settings.lowBalanceThreshold,
@@ -121,20 +131,15 @@ final class AppState: ObservableObject {
     }
 
     func bootstrap() async {
-        guard !hasBootstrapped else {
-            return
-        }
-
+        let shouldRefreshStartupBalance = !hasBootstrapped
         hasBootstrapped = true
         loadKeyState()
-        if StartupRestorePolicy.shouldStartProxy(
-            settings: settings.persistentSettings,
-            hasAPIKey: settings.hasDeepSeekAPIKey
-        ) {
-            await startProxy()
-        }
+        startUsageRolloverTimer()
+        await ensureAutoStartedProxyIfNeeded()
         if settings.hasDeepSeekAPIKey {
-            await refreshBalance()
+            if shouldRefreshStartupBalance {
+                await refreshBalance()
+            }
             startBalanceRefreshTimer()
         }
     }
@@ -191,10 +196,14 @@ final class AppState: ObservableObject {
             let apiKey = try requireDeepSeekAPIKey()
             await proxyServer?.stop()
             let provider = DeepSeekProvider(apiKey: apiKey)
+            let pricing = settings.deepSeekPricing
             let server = LocalProxyServer(
                 configuration: .init(host: "127.0.0.1", port: settings.proxyPort),
                 authenticator: ProxyAuthenticator(requiredBearerToken: settings.proxyBearerToken),
                 provider: provider,
+                costEstimator: { model, usage, _ in
+                    try pricing.estimateCostUSD(model: model, usage: usage)
+                },
                 usageRecorder: { [weak self] event in
                     await MainActor.run {
                         self?.record(event)
@@ -220,6 +229,17 @@ final class AppState: ObservableObject {
 
     func restartProxy() async {
         await stopProxy()
+        await startProxy()
+    }
+
+    func ensureAutoStartedProxyIfNeeded() async {
+        guard StartupRestorePolicy.shouldStartProxy(
+            settings: settings.persistentSettings,
+            hasAPIKey: settings.hasDeepSeekAPIKey,
+            isProxyRunning: proxyStatus.isRunning
+        ) else {
+            return
+        }
         await startProxy()
     }
 
@@ -406,6 +426,25 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func startUsageRolloverTimer() {
+        guard usageRolloverTask == nil else {
+            return
+        }
+        usageRolloverTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let seconds = CalendarRefreshPolicy.secondsUntilNextDay(from: .now)
+                let nanoseconds = UInt64(seconds * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                guard !Task.isCancelled else {
+                    return
+                }
+                await MainActor.run {
+                    self?.refreshUsageViews()
+                }
+            }
+        }
+    }
+
     private func applyLaunchAtLogin(_ enabled: Bool) {
         do {
             if enabled {
@@ -470,13 +509,13 @@ enum ProxyStatus: Equatable {
     var label: String {
         switch self {
         case .stopped:
-            "Stopped"
+            "已停止"
         case let .running(port):
-            "Running on \(port)"
+            "运行于 \(port)"
         case .needsRestart:
-            "Restart required"
+            "需要重启"
         case .failed:
-            "Failed"
+            "启动失败"
         }
     }
 
@@ -532,6 +571,7 @@ struct QuotaSettings: Equatable {
     var autoStartProxy: Bool
     var refreshIntervalSeconds: Int
     var hasDeepSeekAPIKey: Bool
+    var deepSeekPricing: DeepSeekPricingCatalog
 
     init(
         dailyBudgetUSD: Decimal,
@@ -543,7 +583,8 @@ struct QuotaSettings: Equatable {
         proxyBearerToken: String,
         autoStartProxy: Bool,
         refreshIntervalSeconds: Int,
-        hasDeepSeekAPIKey: Bool
+        hasDeepSeekAPIKey: Bool,
+        deepSeekPricing: DeepSeekPricingCatalog
     ) {
         self.dailyBudgetUSD = dailyBudgetUSD
         self.lowBalanceThreshold = lowBalanceThreshold
@@ -555,6 +596,7 @@ struct QuotaSettings: Equatable {
         self.autoStartProxy = autoStartProxy
         self.refreshIntervalSeconds = refreshIntervalSeconds
         self.hasDeepSeekAPIKey = hasDeepSeekAPIKey
+        self.deepSeekPricing = deepSeekPricing
     }
 
     init(persistent: PersistentQuotaSettings, hasDeepSeekAPIKey: Bool = false) {
@@ -568,6 +610,7 @@ struct QuotaSettings: Equatable {
         autoStartProxy = persistent.autoStartProxy
         refreshIntervalSeconds = persistent.refreshIntervalSeconds
         self.hasDeepSeekAPIKey = hasDeepSeekAPIKey
+        deepSeekPricing = persistent.deepSeekPricing
     }
 
     static let `default` = QuotaSettings(
@@ -580,7 +623,8 @@ struct QuotaSettings: Equatable {
         proxyBearerToken: UUID().uuidString,
         autoStartProxy: true,
         refreshIntervalSeconds: 300,
-        hasDeepSeekAPIKey: false
+        hasDeepSeekAPIKey: false,
+        deepSeekPricing: .defaultCNY
     )
 
     var persistentSettings: PersistentQuotaSettings {
@@ -593,7 +637,8 @@ struct QuotaSettings: Equatable {
             lowBalanceThreshold: lowBalanceThreshold,
             spikeMultiplier: spikeMultiplier,
             notificationsEnabled: notificationsEnabled,
-            launchAtLogin: launchAtLogin
+            launchAtLogin: launchAtLogin,
+            deepSeekPricing: deepSeekPricing
         )
     }
 }
@@ -603,8 +648,8 @@ extension Decimal {
         NSDecimalNumber(decimal: self).doubleValue
     }
 
-    var usdText: String {
-        "$\(shortDecimalText)"
+    var cnyText: String {
+        "\(shortDecimalText) CNY"
     }
 
     var shortDecimalText: String {
@@ -617,6 +662,10 @@ extension Decimal {
 }
 
 private extension UsageEvent {
+    var normalizedCost: Decimal {
+        costUSD < .zero ? -costUSD : costUSD
+    }
+
     static var previewEvents: [UsageEvent] {
         let calendar = Calendar.current
         let now = Date()

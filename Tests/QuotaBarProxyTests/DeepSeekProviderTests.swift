@@ -184,10 +184,10 @@ final class DeepSeekProviderTests: XCTestCase {
         XCTAssertEqual(
             usage,
             TokenUsage(
-                inputTokens: 12,
+                inputTokens: 16,
                 outputTokens: 7,
                 cacheHitInputTokens: 4,
-                cacheMissInputTokens: 8
+                cacheMissInputTokens: 12
             )
         )
     }
@@ -212,10 +212,10 @@ final class DeepSeekProviderTests: XCTestCase {
         XCTAssertEqual(
             usage,
             TokenUsage(
-                inputTokens: 12,
+                inputTokens: 16,
                 outputTokens: 7,
                 cacheHitInputTokens: 4,
-                cacheMissInputTokens: 8
+                cacheMissInputTokens: 12
             )
         )
     }

@@ -67,14 +67,16 @@ public enum UsageAggregator {
         var totalCost = Decimal.zero
 
         for event in filtered {
+            let model = (try? DeepSeekPricing.canonicalModel(for: event.model)) ?? event.model
+            let cost = normalizedCost(event.costUSD)
             promptCacheHitTokens += event.usage.cacheHitInputTokens
             promptCacheMissTokens += event.usage.cacheMissInputTokens
             completionTokens += event.usage.outputTokens
             totalTokens += event.usage.totalTokens
-            totalCost += event.costUSD
+            totalCost += cost
 
-            var row = rowsByModel[event.model] ?? UsageModelSummary(
-                model: event.model,
+            var row = rowsByModel[model] ?? UsageModelSummary(
+                model: model,
                 inputTokens: 0,
                 outputTokens: 0,
                 totalCostUSD: .zero,
@@ -87,8 +89,8 @@ public enum UsageAggregator {
             row.completionTokens += event.usage.outputTokens
             row.inputTokens += event.usage.inputTokens
             row.outputTokens += event.usage.outputTokens
-            row.totalCostUSD += event.costUSD
-            rowsByModel[event.model] = row
+            row.totalCostUSD += cost
+            rowsByModel[model] = row
         }
 
         return UsageSummary(
@@ -125,10 +127,14 @@ public enum UsageAggregator {
                 continue
             }
             point.totalTokens += event.usage.totalTokens
-            point.totalCostUSD += event.costUSD
+            point.totalCostUSD += normalizedCost(event.costUSD)
             pointsByDay[eventDay] = point
         }
 
         return pointsByDay.values.sorted { $0.day < $1.day }
+    }
+
+    private static func normalizedCost(_ cost: Decimal) -> Decimal {
+        cost < .zero ? -cost : cost
     }
 }

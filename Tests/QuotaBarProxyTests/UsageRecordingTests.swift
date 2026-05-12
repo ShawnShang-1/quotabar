@@ -61,7 +61,7 @@ final class UsageRecordingTests: XCTestCase {
         XCTAssertEqual(events[0].usage.outputTokens, 7)
         XCTAssertEqual(events[0].usage.cacheHitInputTokens, 4)
         XCTAssertEqual(events[0].usage.cacheMissInputTokens, 8)
-        XCTAssertEqual(events[0].costUSD, Decimal(string: "0.0000030912"))
+        XCTAssertEqual(events[0].costUSD, Decimal(string: "0.00002208"))
         XCTAssertNil(events[0].clientLabel)
     }
 
@@ -108,7 +108,7 @@ final class UsageRecordingTests: XCTestCase {
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].model, "deepseek-chat")
         XCTAssertEqual(events[0].usage.totalTokens, 19)
-        XCTAssertEqual(events[0].costUSD, Decimal(string: "0.0000030912"))
+        XCTAssertEqual(events[0].costUSD, Decimal(string: "0.00002208"))
     }
 
     func testHandleRecordsAnthropicMessagesUsageMetadata() async throws {
@@ -162,11 +162,69 @@ final class UsageRecordingTests: XCTestCase {
         let events = await capture.events
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].model, "deepseek-v4-pro[1m]")
-        XCTAssertEqual(events[0].usage.inputTokens, 12)
+        XCTAssertEqual(events[0].usage.inputTokens, 16)
         XCTAssertEqual(events[0].usage.outputTokens, 7)
         XCTAssertEqual(events[0].usage.cacheHitInputTokens, 4)
-        XCTAssertEqual(events[0].usage.cacheMissInputTokens, 8)
-        XCTAssertEqual(events[0].costUSD, Decimal(string: "0.0000095845"))
+        XCTAssertEqual(events[0].usage.cacheMissInputTokens, 12)
+        XCTAssertEqual(events[0].costUSD, Decimal(string: "0.0000781"))
         XCTAssertEqual(events[0].clientLabel, "cc-switch")
+    }
+
+    func testHandleUsesInjectedCNYPricingEstimatorForUsageMetadata() async throws {
+        let capture = UsageCapture()
+        let provider = DeepSeekProvider(
+            apiKey: "deepseek-key",
+            transport: { _ in
+                UpstreamHTTPResponse(
+                    statusCode: 200,
+                    headers: ["Content-Type": "application/json"],
+                    body: Data(
+                        """
+                        {
+                          "usage": {
+                            "prompt_tokens": 1000000,
+                            "completion_tokens": 1000000,
+                            "total_tokens": 2000000,
+                            "prompt_cache_hit_tokens": 500000,
+                            "prompt_cache_miss_tokens": 500000
+                          }
+                        }
+                        """.utf8
+                    )
+                )
+            }
+        )
+        let catalog = DeepSeekPricingCatalog(
+            v4Flash: DeepSeekModelPricing(
+                canonicalModel: "deepseek-v4-flash",
+                cacheHitInputUSDPerMillion: Decimal(string: "0.20")!,
+                cacheMissInputUSDPerMillion: Decimal(string: "10")!,
+                outputUSDPerMillion: Decimal(string: "20")!
+            ),
+            v4Pro: .defaultV4ProCNY
+        )
+        let server = LocalProxyServer(
+            authenticator: ProxyAuthenticator(requiredBearerToken: nil),
+            provider: provider,
+            costEstimator: { model, usage, _ in
+                try catalog.estimateCostUSD(model: model, usage: usage)
+            },
+            usageRecorder: { event in
+                await capture.record(event)
+            }
+        )
+
+        let response = await server.handle(
+            ProxyHTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["Content-Type": "application/json"],
+                body: Data(#"{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"not stored"}]}"#.utf8)
+            )
+        )
+
+        XCTAssertEqual(response.statusCode, 200)
+        let events = await capture.events
+        XCTAssertEqual(events.first?.costUSD, Decimal(string: "25.10"))
     }
 }

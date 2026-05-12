@@ -49,8 +49,41 @@ import Testing
 
     #expect(summary.totalTokens == 4_500)
     #expect(summary.totalCostUSD == Decimal(string: "0.00356")!)
-    #expect(summary.byModel.map(\.model) == ["deepseek-chat", "deepseek-reasoner"])
-    #expect(summary.byModel.first?.totalTokens == 1_500)
+    #expect(summary.byModel.map(\.model) == ["deepseek-v4-flash"])
+    #expect(summary.byModel.first?.totalTokens == 4_500)
+}
+
+@Test func summaryCanonicalizesV4ModelsAndNormalizesNegativeStoredCosts() throws {
+    let calendar = Calendar(identifier: .gregorian)
+    let start = try #require(DateComponents(calendar: calendar, year: 2026, month: 5, day: 10).date)
+    let end = try #require(calendar.date(byAdding: .day, value: 1, to: start))
+    let events = [
+        UsageEvent(
+            timestamp: start.addingTimeInterval(60),
+            provider: .deepSeek,
+            model: "deepseek-v4-pro[1m]",
+            usage: TokenUsage(inputTokens: 100, outputTokens: 20, cacheHitInputTokens: 50),
+            costUSD: Decimal(string: "-7.50")!,
+            statusCode: 200,
+            durationMS: 420,
+            clientLabel: "cc-switch",
+            isAnomalous: false
+        )
+    ]
+
+    let summary = UsageAggregator.summary(
+        for: events,
+        interval: DateInterval(start: start, end: end)
+    )
+    let trend = UsageAggregator.dailyTrend(
+        for: events,
+        interval: DateInterval(start: start, end: end),
+        calendar: calendar
+    )
+
+    #expect(summary.totalCostUSD == Decimal(string: "7.50")!)
+    #expect(summary.byModel.map(\.model) == ["deepseek-v4-pro"])
+    #expect(trend.first?.totalCostUSD == Decimal(string: "7.50")!)
 }
 
 @Test func dailyTrendProducesZeroFilledDays() throws {

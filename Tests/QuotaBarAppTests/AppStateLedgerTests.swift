@@ -37,7 +37,7 @@ final class AppStateLedgerTests: XCTestCase {
         appState.attachModelContext(context)
 
         XCTAssertEqual(appState.todaySummary.totalTokens, 19)
-        XCTAssertEqual(appState.todayByModel.first?.model, "deepseek-chat")
+        XCTAssertEqual(appState.todayByModel.first?.model, "deepseek-v4-flash")
         XCTAssertEqual(appState.todayByModel.first?.totalCostUSD, Decimal(string: "0.0000030912"))
         let persisted = try context.fetch(FetchDescriptor<UsageLedgerEntry>())
         XCTAssertEqual(persisted.count, 1)
