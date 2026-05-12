@@ -32,6 +32,9 @@ final class AppState: ObservableObject {
                     await ensureAutoStartedProxyIfNeeded()
                 }
             }
+            if hasBootstrapped, oldValue.autoStartProxy != settings.autoStartProxy {
+                startProxyWatchdogTimer()
+            }
         }
     }
     @Published var proxyStatus: ProxyStatus = .stopped
@@ -48,6 +51,8 @@ final class AppState: ObservableObject {
     private var memoryEvents: [UsageEvent]
     private var refreshTask: Task<Void, Never>?
     private var usageRolloverTask: Task<Void, Never>?
+    private var proxyWatchdogTask: Task<Void, Never>?
+    private var isStartingProxy = false
     private var hasBootstrapped = false
 
     init(
@@ -73,20 +78,21 @@ final class AppState: ObservableObject {
             interval: Self.todayInterval()
         )
         self.todaySummary = initialTodaySummary
-        self.todayByModel = Array(initialTodaySummary.byModel)
+        self.todayByModel = Self.displayModelRows(from: initialTodaySummary)
         self.monthlyTrend = UsageAggregator.dailyTrend(
             for: memoryEvents,
-            interval: Self.monthInterval()
+            interval: Self.trailingThirtyDaysInterval()
         )
     }
 
     deinit {
         refreshTask?.cancel()
         usageRolloverTask?.cancel()
+        proxyWatchdogTask?.cancel()
     }
 
     var statusTitle: String {
-        "\(balanceSummary.shortBalanceText) | 今日 \(todaySummary.totalCostUSD.cnyText)"
+        "\(balanceSummary.shortBalanceText) | \(todaySummary.totalCostUSD.amountText)"
     }
 
     var proxyBaseURLText: String {
@@ -135,6 +141,7 @@ final class AppState: ObservableObject {
         hasBootstrapped = true
         loadKeyState()
         startUsageRolloverTimer()
+        startProxyWatchdogTimer()
         await ensureAutoStartedProxyIfNeeded()
         if settings.hasDeepSeekAPIKey {
             if shouldRefreshStartupBalance {
@@ -192,6 +199,14 @@ final class AppState: ObservableObject {
     }
 
     func startProxy() async {
+        guard !isStartingProxy else {
+            return
+        }
+        isStartingProxy = true
+        defer {
+            isStartingProxy = false
+        }
+
         do {
             let apiKey = try requireDeepSeekAPIKey()
             await proxyServer?.stop()
@@ -214,6 +229,7 @@ final class AppState: ObservableObject {
             settings.proxyPort = port
             proxyServer = server
             proxyStatus = .running(port: port)
+            startProxyWatchdogTimer()
             lastErrorMessage = nil
         } catch {
             proxyStatus = .failed(error.localizedDescription)
@@ -349,8 +365,19 @@ final class AppState: ObservableObject {
     private func rebuildSnapshots(from events: [UsageEvent]) {
         let today = UsageAggregator.summary(for: events, interval: Self.todayInterval())
         todaySummary = today
-        todayByModel = Array(today.byModel)
-        monthlyTrend = UsageAggregator.dailyTrend(for: events, interval: Self.monthInterval())
+        todayByModel = Self.displayModelRows(from: today)
+        monthlyTrend = UsageAggregator.dailyTrend(for: events, interval: Self.trailingThirtyDaysInterval())
+    }
+
+    private static func displayModelRows(from summary: UsageSummary) -> [UsageModelSummary] {
+        DisplayModel.allCases.map { displayModel in
+            summary.byModel[displayModel.rawValue] ?? UsageModelSummary(
+                model: displayModel.rawValue,
+                inputTokens: 0,
+                outputTokens: 0,
+                totalCostUSD: .zero
+            )
+        }
     }
 
     private func requireDeepSeekAPIKey() throws -> String {
@@ -445,6 +472,50 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func startProxyWatchdogTimer() {
+        proxyWatchdogTask?.cancel()
+        guard settings.autoStartProxy else {
+            proxyWatchdogTask = nil
+            return
+        }
+        proxyWatchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled else {
+                    return
+                }
+                await self?.recoverProxyIfNeeded()
+            }
+        }
+    }
+
+    private func recoverProxyIfNeeded() async {
+        let healthCheckSucceeded = await proxyHealthCheck()
+        guard ProxyWatchdogPolicy.shouldRestartProxy(
+            settings: settings.persistentSettings,
+            hasAPIKey: settings.hasDeepSeekAPIKey,
+            proxyStatusIsRunning: proxyStatus.isRunning,
+            healthCheckSucceeded: healthCheckSucceeded
+        ) else {
+            return
+        }
+        await restartProxy()
+    }
+
+    private func proxyHealthCheck() async -> Bool {
+        guard proxyStatus.isRunning, let url = URL(string: proxyBaseURLText) else {
+            return false
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 3
+        do {
+            _ = try await URLSession.shared.data(for: request)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     private func applyLaunchAtLogin(_ enabled: Bool) {
         do {
             if enabled {
@@ -464,10 +535,10 @@ final class AppState: ObservableObject {
         return DateInterval(start: start, end: end)
     }
 
-    private static func monthInterval(now: Date = .now, calendar: Calendar = .current) -> DateInterval {
-        let components = calendar.dateComponents([.year, .month], from: now)
-        let start = calendar.date(from: components) ?? calendar.startOfDay(for: now)
-        let end = calendar.date(byAdding: .month, value: 1, to: start) ?? now
+    private static func trailingThirtyDaysInterval(now: Date = .now, calendar: Calendar = .current) -> DateInterval {
+        let today = calendar.startOfDay(for: now)
+        let start = calendar.date(byAdding: .day, value: -29, to: today) ?? today
+        let end = calendar.date(byAdding: .day, value: 1, to: today) ?? now
         return DateInterval(start: start, end: end)
     }
 
@@ -482,6 +553,15 @@ final class AppState: ObservableObject {
         let currentHour = currentHourInterval(now: now, calendar: calendar)
         let start = calendar.date(byAdding: .hour, value: -24, to: currentHour.start) ?? currentHour.start
         return DateInterval(start: start, end: currentHour.start)
+    }
+}
+
+enum DisplayModel: String, CaseIterable {
+    case flash = "deepseek-v4-flash"
+    case pro = "deepseek-v4-pro"
+
+    var title: String {
+        rawValue
     }
 }
 
@@ -550,7 +630,7 @@ struct BalanceSummary: Equatable {
     }
 
     var shortBalanceText: String {
-        "\(currency) \(totalBalance.shortDecimalText)"
+        totalBalance.amountText
     }
 
     static let preview = BalanceSummary(
@@ -648,8 +728,12 @@ extension Decimal {
         NSDecimalNumber(decimal: self).doubleValue
     }
 
-    var cnyText: String {
-        "\(shortDecimalText) CNY"
+    var amountText: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: self as NSDecimalNumber) ?? "\(self)"
     }
 
     var shortDecimalText: String {

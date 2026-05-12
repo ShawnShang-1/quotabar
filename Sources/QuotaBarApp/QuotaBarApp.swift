@@ -8,12 +8,27 @@ struct QuotaBarApp: App {
     private let modelContainer: ModelContainer
 
     init() {
-        let container = try! ModelContainer(
-            for: UsageLedgerEntry.self,
-            ProviderBalanceEntry.self
-        )
+        let container: ModelContainer
+        let containerError: Error?
+        do {
+            container = try ModelContainer(
+                for: UsageLedgerEntry.self,
+                ProviderBalanceEntry.self
+            )
+            containerError = nil
+        } catch {
+            container = try! ModelContainer(
+                for: UsageLedgerEntry.self,
+                ProviderBalanceEntry.self,
+                configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+            )
+            containerError = error
+        }
         modelContainer = container
         let state = AppState()
+        if let containerError {
+            state.lastErrorMessage = "本地账本加载失败，已临时使用内存账本：\(containerError.localizedDescription)"
+        }
         _appState = StateObject(wrappedValue: state)
         Task { @MainActor in
             state.attachModelContext(container.mainContext)
@@ -25,7 +40,8 @@ struct QuotaBarApp: App {
         MenuBarExtra {
             MenuBarDashboardView(appState: appState, alertManager: alertManager)
         } label: {
-            Label(appState.statusTitle, systemImage: "chart.bar.xaxis")
+            Text(appState.statusTitle)
+                .monospacedDigit()
                 .task {
                     await appState.bootstrap()
                 }

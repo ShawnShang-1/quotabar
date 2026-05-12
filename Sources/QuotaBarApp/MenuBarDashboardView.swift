@@ -30,6 +30,10 @@ struct MenuBarDashboardView: View {
         max(1, appState.monthlyTrend.map { $0.totalCostUSD.doubleValue }.max() ?? 0)
     }
 
+    private var maxModelTokens: Int {
+        max(1, appState.todayByModel.map(\.totalTokens).max() ?? 0)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -38,7 +42,7 @@ struct MenuBarDashboardView: View {
                 HStack {
                     Text("Daily spend")
                     Spacer()
-                    Text("\(appState.todaySummary.totalCostUSD.cnyText) / \(appState.settings.dailyBudgetUSD.cnyText)")
+                    Text("\(appState.todaySummary.totalCostUSD.amountText) / \(appState.settings.dailyBudgetUSD.amountText)")
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
@@ -49,20 +53,21 @@ struct MenuBarDashboardView: View {
             chartSection(title: "Today by model") {
                 Chart(appState.todayByModel) { item in
                     BarMark(
-                        x: .value("Tokens", item.totalTokens),
+                        x: .value("Tokens", displayTokens(for: item)),
                         y: .value("Model", item.model)
                     )
-                    .foregroundStyle(by: .value("Model", item.model))
+                    .foregroundStyle(color(for: item.model))
                     .annotation(position: .trailing, alignment: .leading) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(item.totalTokens, format: .number.notation(.compactName))
-                            Text(item.totalCostUSD.cnyText)
+                            Text(item.totalCostUSD.amountText)
                         }
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     }
                 }
                 .chartLegend(.hidden)
+                .chartXScale(domain: 0...Double(max(maxModelTokens, 1)))
                 .chartXAxis {
                     AxisMarks(position: .bottom, values: .automatic(desiredCount: 3))
                 }
@@ -80,7 +85,7 @@ struct MenuBarDashboardView: View {
             }
 
             chartSection(title: "Monthly cost trend") {
-                Text("Month \(monthTotalCostUSD.cnyText) · \(monthTotalTokens.formatted(.number.notation(.compactName))) tok")
+                Text("30d \(monthTotalCostUSD.amountText) · \(monthTotalTokens.formatted(.number.notation(.compactName))) tok")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -93,9 +98,9 @@ struct MenuBarDashboardView: View {
                     .foregroundStyle(.blue.opacity(0.7))
                 }
                 .chartXAxis {
-                    AxisMarks(values: .stride(by: .day, count: 7)) {
+                    AxisMarks(values: .stride(by: .day, count: 5)) {
                         AxisGridLine()
-                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                        AxisValueLabel(format: .dateTime.day())
                     }
                 }
                 .chartYAxis {
@@ -133,7 +138,7 @@ struct MenuBarDashboardView: View {
                 Text("QuotaBar")
                     .font(.headline)
                 Text(appState.balanceSummary.shortBalanceText)
-                    .font(.title3)
+                    .font(.system(size: 30, weight: .semibold, design: .rounded))
                     .fontWeight(.semibold)
                     .monospacedDigit()
             }
@@ -152,7 +157,7 @@ struct MenuBarDashboardView: View {
                 .buttonStyle(.borderless)
                 .help("Refresh DeepSeek balance")
 
-                Text("Today \(appState.todaySummary.totalCostUSD.cnyText) · \(appState.todaySummary.totalTokens.formatted(.number.notation(.compactName))) tok")
+                Text("Today \(appState.todaySummary.totalCostUSD.amountText) · \(appState.todaySummary.totalTokens.formatted(.number.notation(.compactName))) tok")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -211,6 +216,24 @@ struct MenuBarDashboardView: View {
             return
         }
         await alertManager.schedule(appState.currentAlertCandidates)
+    }
+
+    private func displayTokens(for item: UsageModelSummary) -> Double {
+        if item.totalTokens > 0 {
+            return Double(item.totalTokens)
+        }
+        return max(1, Double(maxModelTokens) * 0.025)
+    }
+
+    private func color(for model: String) -> Color {
+        switch model {
+        case DisplayModel.flash.rawValue:
+            Color(red: 0.18, green: 0.78, blue: 0.92)
+        case DisplayModel.pro.rawValue:
+            Color(red: 0.95, green: 0.56, blue: 0.18)
+        default:
+            .secondary
+        }
     }
 }
 

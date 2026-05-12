@@ -49,6 +49,7 @@ public actor LocalProxyServer {
         self.provider = provider
         self.costEstimator = costEstimator
         self.usageRecorder = usageRecorder
+        Darwin.signal(SIGPIPE, SIG_IGN)
     }
 
     public func handle(_ request: ProxyHTTPRequest) async -> ProxyHTTPResponse {
@@ -166,6 +167,7 @@ public actor LocalProxyServer {
         guard fileDescriptor >= 0 else {
             throw Error.socketFailure(String(cString: strerror(errno)))
         }
+        Self.disableSigPipe(on: fileDescriptor)
         let flags = fcntl(fileDescriptor, F_GETFL, 0)
         guard flags >= 0, fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
             let message = String(cString: strerror(errno))
@@ -267,11 +269,23 @@ public actor LocalProxyServer {
             if flags >= 0 {
                 _ = fcntl(clientFileDescriptor, F_SETFL, flags & ~O_NONBLOCK)
             }
+            disableSigPipe(on: clientFileDescriptor)
 
             DispatchQueue.global(qos: .userInitiated).async {
                 processConnection(clientFileDescriptor, server: server, maxBodyBytes: maxBodyBytes)
             }
         }
+    }
+
+    private nonisolated static func disableSigPipe(on fileDescriptor: CInt) {
+        var noSigPipe: CInt = 1
+        setsockopt(
+            fileDescriptor,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &noSigPipe,
+            socklen_t(MemoryLayout<CInt>.size)
+        )
     }
 
     private nonisolated static func processConnection(

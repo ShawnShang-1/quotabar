@@ -108,13 +108,13 @@ struct SettingsView: View {
 
             Section("预算与提醒") {
                 TextField(
-                    "每日预算 CNY",
+                    "每日预算",
                     value: $appState.settings.dailyBudgetUSD,
                     format: .number.precision(.fractionLength(2))
                 )
 
                 TextField(
-                    "低余额阈值 CNY",
+                    "低余额阈值",
                     value: $appState.settings.lowBalanceThreshold,
                     format: .number.precision(.fractionLength(2))
                 )
@@ -155,7 +155,7 @@ struct SettingsView: View {
                 .disabled(alertManager.authorizationState == .authorized)
             }
 
-            Section("DeepSeek 价格（CNY / 百万 tokens）") {
+            Section("DeepSeek 价格（元 / 百万 tokens）") {
                 pricingFields(
                     title: "V4 Flash",
                     pricing: $appState.settings.deepSeekPricing.v4Flash
