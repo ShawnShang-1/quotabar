@@ -40,8 +40,13 @@ struct QuotaBarApp: App {
         MenuBarExtra {
             MenuBarDashboardView(appState: appState, alertManager: alertManager)
         } label: {
-            Text(appState.statusTitle)
-                .monospacedDigit()
+            VStack(alignment: .trailing, spacing: -1) {
+                Text(appState.statusTitleLines[0])
+                Text(appState.statusTitleLines[1])
+            }
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .lineLimit(1)
                 .task {
                     await appState.bootstrap()
                 }

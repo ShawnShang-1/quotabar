@@ -89,6 +89,7 @@ final class AppStateLedgerTests: XCTestCase {
         XCTAssertFalse(appState.statusTitle.contains("$"))
         XCTAssertTrue(appState.statusTitle.contains("4.96"))
         XCTAssertTrue(appState.statusTitle.contains("1.91"))
+        XCTAssertEqual(appState.statusTitleLines, ["4.96", "1.91"])
     }
 
     func testUsageTrendCoversPastThirtyDaysThroughToday() throws {
@@ -129,5 +130,12 @@ final class AppStateLedgerTests: XCTestCase {
         XCTAssertEqual(calendar.startOfDay(for: appState.monthlyTrend.last!.day), today)
         XCTAssertEqual(appState.monthlyTrend.first?.totalCostUSD, Decimal(string: "0.10")!)
         XCTAssertEqual(appState.monthlyTrend.reduce(Decimal.zero) { $0 + $1.totalCostUSD }, Decimal(string: "0.10")!)
+    }
+
+    func testModelBarLayoutKeepsZeroUsageAsThinBar() {
+        XCTAssertEqual(TodayModelBarLayout.barFraction(tokens: 0, maxTokens: 0), 0.025)
+        XCTAssertEqual(TodayModelBarLayout.barFraction(tokens: 0, maxTokens: 1_000_000), 0.025)
+        XCTAssertEqual(TodayModelBarLayout.barFraction(tokens: 500_000, maxTokens: 1_000_000), 0.5)
+        XCTAssertEqual(TodayModelBarLayout.barFraction(tokens: 2_000_000, maxTokens: 1_000_000), 1)
     }
 }

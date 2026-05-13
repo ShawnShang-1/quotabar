@@ -31,7 +31,7 @@ struct MenuBarDashboardView: View {
     }
 
     private var maxModelTokens: Int {
-        max(1, appState.todayByModel.map(\.totalTokens).max() ?? 0)
+        appState.todayByModel.map(\.totalTokens).max() ?? 0
     }
 
     var body: some View {
@@ -51,37 +51,16 @@ struct MenuBarDashboardView: View {
             Divider()
 
             chartSection(title: "Today by model") {
-                Chart(appState.todayByModel) { item in
-                    BarMark(
-                        x: .value("Tokens", displayTokens(for: item)),
-                        y: .value("Model", item.model)
-                    )
-                    .foregroundStyle(color(for: item.model))
-                    .annotation(position: .trailing, alignment: .leading) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(item.totalTokens, format: .number.notation(.compactName))
-                            Text(item.totalCostUSD.amountText)
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(appState.todayByModel) { item in
+                        TodayModelBarRow(
+                            item: item,
+                            maxTokens: maxModelTokens,
+                            tint: color(for: item.model)
+                        )
                     }
                 }
-                .chartLegend(.hidden)
-                .chartXScale(domain: 0...Double(max(maxModelTokens, 1)))
-                .chartXAxis {
-                    AxisMarks(position: .bottom, values: .automatic(desiredCount: 3))
-                }
-                .chartYAxis {
-                    AxisMarks { value in
-                        AxisValueLabel {
-                            if let label = value.as(String.self) {
-                                Text(label)
-                                    .lineLimit(1)
-                            }
-                        }
-                    }
-                }
-                .frame(height: 136)
+                .frame(height: 136, alignment: .center)
             }
 
             chartSection(title: "Monthly cost trend") {
@@ -218,13 +197,6 @@ struct MenuBarDashboardView: View {
         await alertManager.schedule(appState.currentAlertCandidates)
     }
 
-    private func displayTokens(for item: UsageModelSummary) -> Double {
-        if item.totalTokens > 0 {
-            return Double(item.totalTokens)
-        }
-        return max(1, Double(maxModelTokens) * 0.025)
-    }
-
     private func color(for model: String) -> Color {
         switch model {
         case DisplayModel.flash.rawValue:
@@ -234,6 +206,58 @@ struct MenuBarDashboardView: View {
         default:
             .secondary
         }
+    }
+}
+
+struct TodayModelBarRow: View {
+    var item: UsageModelSummary
+    var maxTokens: Int
+    var tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(item.model)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            HStack(spacing: 8) {
+                GeometryReader { proxy in
+                    let width = max(2, proxy.size.width * TodayModelBarLayout.barFraction(tokens: item.totalTokens, maxTokens: maxTokens))
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.secondary.opacity(0.10))
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(tint)
+                            .frame(width: width)
+                    }
+                }
+                .frame(height: 30)
+
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(item.totalTokens, format: .number.notation(.compactName))
+                    Text(item.totalCostUSD.amountText)
+                }
+                .font(.caption2)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: 58, alignment: .trailing)
+            }
+        }
+    }
+}
+
+enum TodayModelBarLayout {
+    static let zeroFraction = 0.025
+
+    static func barFraction(tokens: Int, maxTokens: Int) -> Double {
+        guard tokens > 0, maxTokens > 0 else {
+            return zeroFraction
+        }
+        return min(1, max(0.04, Double(tokens) / Double(maxTokens)))
     }
 }
 

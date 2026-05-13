@@ -95,6 +95,13 @@ final class AppState: ObservableObject {
         "\(balanceSummary.shortBalanceText) | \(todaySummary.totalCostUSD.amountText)"
     }
 
+    var statusTitleLines: [String] {
+        [
+            balanceSummary.shortBalanceText,
+            todaySummary.totalCostUSD.amountText
+        ]
+    }
+
     var proxyBaseURLText: String {
         "http://127.0.0.1:\(settings.proxyPort)/v1"
     }
