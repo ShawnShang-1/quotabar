@@ -21,11 +21,21 @@ final class PackageLocalAppScriptTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, 0)
         XCTAssertTrue(FileManager.default.fileExists(atPath: appBundle.appendingPathComponent("Contents/Info.plist").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: appBundle.appendingPathComponent("Contents/MacOS/QuotaBar").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: appBundle.appendingPathComponent("Contents/Resources/AppIcon.placeholder.txt").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: appBundle.appendingPathComponent("Contents/Resources/AppIcon.icns").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: appBundle.appendingPathComponent("Contents/Resources/AppIcon.placeholder.txt").path))
 
         let plistData = try Data(contentsOf: appBundle.appendingPathComponent("Contents/Info.plist"))
         let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: plistData, format: nil) as? [String: Any])
         XCTAssertEqual(plist["LSUIElement"] as? Bool, true)
         XCTAssertEqual(plist["CFBundleExecutable"] as? String, "QuotaBar")
+        XCTAssertEqual(plist["CFBundleIconFile"] as? String, "AppIcon")
+
+        let verify = Process()
+        verify.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        verify.arguments = ["--verify", "--deep", "--strict", appBundle.path]
+        try verify.run()
+        verify.waitUntilExit()
+
+        XCTAssertEqual(verify.terminationStatus, 0)
     }
 }

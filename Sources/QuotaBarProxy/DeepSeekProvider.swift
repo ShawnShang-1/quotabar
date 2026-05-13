@@ -201,13 +201,52 @@ public struct DeepSeekProvider: Sendable {
     }
 
     private func copyForwardableHeaders(from incoming: ProxyHTTPRequest, to request: inout URLRequest) {
-        let blockedHeaders = Set(["authorization", "x-api-key", "host", "content-length", "connection"])
+        let blockedHeaders = Self.hopByHopHeaders(from: incoming.headers)
         for (name, value) in incoming.headers {
             guard !blockedHeaders.contains(name.lowercased()) else {
                 continue
             }
             request.setValue(value, forHTTPHeaderField: name)
         }
+    }
+
+    private static func hopByHopHeaders(from headers: [String: String]) -> Set<String> {
+        var blockedHeaders = Set([
+            "authorization",
+            "x-api-key",
+            "host",
+            "content-length",
+            "connection",
+            "keep-alive",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade"
+        ])
+
+        if let connectionHeader = headerValue(in: headers, named: "Connection") {
+            for token in connectionHeader.split(separator: ",") {
+                let headerName = token.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard !headerName.isEmpty else {
+                    continue
+                }
+                blockedHeaders.insert(headerName)
+            }
+        }
+
+        return blockedHeaders
+    }
+
+    private static func headerValue(in headers: [String: String], named name: String) -> String? {
+        for (headerName, value) in headers {
+            guard headerName.caseInsensitiveCompare(name) == .orderedSame else {
+                continue
+            }
+            return value
+        }
+        return nil
     }
 
     private static func bodyRequestingUsageWhenStreaming(_ body: Data?) -> Data? {

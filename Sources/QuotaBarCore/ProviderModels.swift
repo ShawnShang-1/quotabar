@@ -102,7 +102,7 @@ public struct UsageAlertPolicy: Equatable, Sendable {
                     id: "deepseek-daily-budget",
                     kind: .dailyBudgetExceeded,
                     title: "Daily AI spend over budget",
-                    body: "Today is at \(today.totalCostUSD) CNY, above the \(dailyBudgetUSD) CNY budget."
+                    body: "Today is at \(today.totalCostUSD), above the \(dailyBudgetUSD) daily budget."
                 )
             )
         }

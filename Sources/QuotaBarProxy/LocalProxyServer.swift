@@ -7,6 +7,7 @@ public actor LocalProxyServer {
         case nonLocalhostBinding(String)
         case invalidPort(Int)
         case portInUse(Int)
+        case requestHeadersTooLarge(Int)
         case requestBodyTooLarge(Int)
         case socketFailure(String)
     }
@@ -14,11 +15,18 @@ public actor LocalProxyServer {
     public struct Configuration: Equatable, Sendable {
         public var host: String
         public var port: Int
+        public var maxHeaderBytes: Int
         public var maxBodyBytes: Int
 
-        public init(host: String = "127.0.0.1", port: Int = 0, maxBodyBytes: Int = 10 * 1_024 * 1_024) {
+        public init(
+            host: String = "127.0.0.1",
+            port: Int = 0,
+            maxHeaderBytes: Int = 64 * 1_024,
+            maxBodyBytes: Int = 10 * 1_024 * 1_024
+        ) {
             self.host = host
             self.port = port
+            self.maxHeaderBytes = maxHeaderBytes
             self.maxBodyBytes = maxBodyBytes
         }
 
@@ -49,6 +57,7 @@ public actor LocalProxyServer {
         self.provider = provider
         self.costEstimator = costEstimator
         self.usageRecorder = usageRecorder
+        Darwin.signal(SIGPIPE, SIG_IGN)
     }
 
     public func handle(_ request: ProxyHTTPRequest) async -> ProxyHTTPResponse {
@@ -166,6 +175,7 @@ public actor LocalProxyServer {
         guard fileDescriptor >= 0 else {
             throw Error.socketFailure(String(cString: strerror(errno)))
         }
+        Self.disableSigPipe(on: fileDescriptor)
         let flags = fcntl(fileDescriptor, F_GETFL, 0)
         guard flags >= 0, fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
             let message = String(cString: strerror(errno))
@@ -213,7 +223,12 @@ public actor LocalProxyServer {
         let maxBodyBytes = configuration.maxBodyBytes
         source.setEventHandler { [weak self] in
             guard let self else { return }
-            Self.acceptPendingConnections(on: fileDescriptor, server: self, maxBodyBytes: maxBodyBytes)
+            Self.acceptPendingConnections(
+                on: fileDescriptor,
+                server: self,
+                maxHeaderBytes: configuration.maxHeaderBytes,
+                maxBodyBytes: maxBodyBytes
+            )
         }
         listenerSource = source
         source.resume()
@@ -253,6 +268,7 @@ public actor LocalProxyServer {
     private nonisolated static func acceptPendingConnections(
         on listenerFileDescriptor: CInt,
         server: LocalProxyServer,
+        maxHeaderBytes: Int,
         maxBodyBytes: Int
     ) {
         while true {
@@ -267,25 +283,55 @@ public actor LocalProxyServer {
             if flags >= 0 {
                 _ = fcntl(clientFileDescriptor, F_SETFL, flags & ~O_NONBLOCK)
             }
+            disableSigPipe(on: clientFileDescriptor)
 
             DispatchQueue.global(qos: .userInitiated).async {
-                processConnection(clientFileDescriptor, server: server, maxBodyBytes: maxBodyBytes)
+                processConnection(
+                    clientFileDescriptor,
+                    server: server,
+                    maxHeaderBytes: maxHeaderBytes,
+                    maxBodyBytes: maxBodyBytes
+                )
             }
         }
+    }
+
+    private nonisolated static func disableSigPipe(on fileDescriptor: CInt) {
+        var noSigPipe: CInt = 1
+        setsockopt(
+            fileDescriptor,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &noSigPipe,
+            socklen_t(MemoryLayout<CInt>.size)
+        )
     }
 
     private nonisolated static func processConnection(
         _ fileDescriptor: CInt,
         server: LocalProxyServer,
+        maxHeaderBytes: Int,
         maxBodyBytes: Int
     ) {
         do {
-            let request = try readHTTPRequest(from: fileDescriptor, maxBodyBytes: maxBodyBytes)
+            let request = try readHTTPRequest(
+                from: fileDescriptor,
+                maxHeaderBytes: maxHeaderBytes,
+                maxBodyBytes: maxBodyBytes
+            )
             Task.detached {
                 let proxyResponse = await server.handle(request)
                 try? writeHTTPResponse(proxyResponse, to: fileDescriptor)
                 Darwin.close(fileDescriptor)
             }
+        } catch Error.requestHeadersTooLarge {
+            let response = ProxyHTTPResponse(
+                statusCode: 431,
+                headers: ["Content-Type": "application/json"],
+                body: Data(#"{"error":"request_headers_too_large"}"#.utf8)
+            )
+            try? writeHTTPResponse(response, to: fileDescriptor)
+            Darwin.close(fileDescriptor)
         } catch Error.requestBodyTooLarge {
             let response = ProxyHTTPResponse(
                 statusCode: 413,
@@ -305,22 +351,33 @@ public actor LocalProxyServer {
         }
     }
 
-    private nonisolated static func readHTTPRequest(from fileDescriptor: CInt, maxBodyBytes: Int) throws -> ProxyHTTPRequest {
+    private nonisolated static func readHTTPRequest(
+        from fileDescriptor: CInt,
+        maxHeaderBytes: Int,
+        maxBodyBytes: Int
+    ) throws -> ProxyHTTPRequest {
         var buffer = Data()
         var chunk = [UInt8](repeating: 0, count: 4_096)
+        let headerTerminator = Data("\r\n\r\n".utf8)
 
-        while !buffer.contains(Data("\r\n\r\n".utf8)) {
+        while !buffer.contains(headerTerminator) {
             let count = Darwin.recv(fileDescriptor, &chunk, chunk.count, 0)
             guard count > 0 else {
                 throw Error.socketFailure("Client closed connection before headers were complete")
             }
             buffer.append(chunk, count: count)
-            guard buffer.count <= 10 * 1_024 * 1_024 else {
-                throw Error.socketFailure("Request headers exceeded limit")
+            if let headerRange = buffer.range(of: headerTerminator) {
+                guard headerRange.lowerBound <= maxHeaderBytes else {
+                    throw Error.requestHeadersTooLarge(headerRange.lowerBound)
+                }
+            } else {
+                guard buffer.count <= maxHeaderBytes else {
+                    throw Error.requestHeadersTooLarge(buffer.count)
+                }
             }
         }
 
-        guard let headerRange = buffer.range(of: Data("\r\n\r\n".utf8)) else {
+        guard let headerRange = buffer.range(of: headerTerminator) else {
             throw Error.socketFailure("Missing header terminator")
         }
 
@@ -348,12 +405,18 @@ public actor LocalProxyServer {
             }
             let name = String(line[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
             let value = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if name.caseInsensitiveCompare("Content-Length") == .orderedSame,
+               Self.headerValue(in: headers, named: "Content-Length") != nil {
+                throw Error.socketFailure("Duplicate Content-Length header")
+            }
             headers[name] = value
         }
 
-        let contentLength = headers.first {
-            $0.key.caseInsensitiveCompare("Content-Length") == .orderedSame
-        }.flatMap { Int($0.value) } ?? 0
+        if Self.headerValue(in: headers, named: "Transfer-Encoding") != nil {
+            throw Error.socketFailure("Transfer-Encoding is not supported")
+        }
+
+        let contentLength = try Self.contentLength(from: headers)
         guard contentLength <= maxBodyBytes else {
             throw Error.requestBodyTooLarge(contentLength)
         }
@@ -385,9 +448,27 @@ public actor LocalProxyServer {
         )
     }
 
+    private nonisolated static func contentLength(from headers: [String: String]) throws -> Int {
+        guard let rawValue = headerValue(in: headers, named: "Content-Length") else {
+            return 0
+        }
+
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.allSatisfy(\.isNumber), let contentLength = Int(value) else {
+            throw Error.socketFailure("Invalid Content-Length header")
+        }
+        return contentLength
+    }
+
+    private nonisolated static func headerValue(in headers: [String: String], named name: String) -> String? {
+        headers.first {
+            $0.key.caseInsensitiveCompare(name) == .orderedSame
+        }?.value
+    }
+
     private nonisolated static func writeHTTPResponse(_ response: ProxyHTTPResponse, to fileDescriptor: CInt) throws {
         let body = response.body ?? Data()
-        var headers = response.headers
+        var headers = sanitizedResponseHeaders(response.headers)
         headers["Content-Length"] = "\(body.count)"
         headers["Connection"] = "close"
 
@@ -415,12 +496,49 @@ public actor LocalProxyServer {
         }
     }
 
+    private nonisolated static func sanitizedResponseHeaders(_ headers: [String: String]) -> [String: String] {
+        let blockedHeaders = hopByHopHeaders(from: headers)
+        return headers.reduce(into: [:]) { sanitizedHeaders, header in
+            guard !blockedHeaders.contains(header.key.lowercased()) else {
+                return
+            }
+            sanitizedHeaders[header.key] = header.value
+        }
+    }
+
+    private nonisolated static func hopByHopHeaders(from headers: [String: String]) -> Set<String> {
+        var blockedHeaders = Set([
+            "connection",
+            "content-length",
+            "keep-alive",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade"
+        ])
+
+        if let connectionHeader = headerValue(in: headers, named: "Connection") {
+            for token in connectionHeader.split(separator: ",") {
+                let headerName = token.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard !headerName.isEmpty else {
+                    continue
+                }
+                blockedHeaders.insert(headerName)
+            }
+        }
+
+        return blockedHeaders
+    }
+
     private nonisolated static func statusReasonPhrase(for statusCode: Int) -> String {
         switch statusCode {
         case 200: "OK"
         case 400: "Bad Request"
         case 401: "Unauthorized"
         case 404: "Not Found"
+        case 431: "Request Header Fields Too Large"
         case 413: "Content Too Large"
         case 502: "Bad Gateway"
         default: "HTTP"

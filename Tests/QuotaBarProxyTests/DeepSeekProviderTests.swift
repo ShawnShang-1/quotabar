@@ -63,6 +63,32 @@ final class DeepSeekProviderTests: XCTestCase {
         XCTAssertEqual(request.url?.absoluteString, "https://api.deepseek.com/anthropic/v1/messages")
     }
 
+    func testDoesNotForwardHopByHopHeadersUpstream() throws {
+        let provider = DeepSeekProvider(apiKey: "deepseek-key")
+        let incoming = ProxyHTTPRequest(
+            method: .post,
+            path: "/v1/chat/completions",
+            headers: [
+                "Connection": "keep-alive, X-Connection-Only",
+                "Transfer-Encoding": "chunked",
+                "TE": "trailers",
+                "Upgrade": "websocket",
+                "X-Connection-Only": "drop-me",
+                "Content-Type": "application/json"
+            ],
+            body: Data(#"{"model":"deepseek-chat","messages":[]}"#.utf8)
+        )
+
+        let request = try provider.makeUpstreamRequest(for: incoming)
+
+        XCTAssertNil(request.value(forHTTPHeaderField: "Connection"))
+        XCTAssertNil(request.value(forHTTPHeaderField: "Transfer-Encoding"))
+        XCTAssertNil(request.value(forHTTPHeaderField: "TE"))
+        XCTAssertNil(request.value(forHTTPHeaderField: "Upgrade"))
+        XCTAssertNil(request.value(forHTTPHeaderField: "X-Connection-Only"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+    }
+
     func testStreamingChatCompletionRequestsAskDeepSeekToIncludeUsage() throws {
         let provider = DeepSeekProvider(apiKey: "deepseek-key")
         let incoming = ProxyHTTPRequest(
