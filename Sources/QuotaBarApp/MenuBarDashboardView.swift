@@ -244,7 +244,8 @@ struct TodayModelBarRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-                .frame(width: 58, alignment: .trailing)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: TodayModelBarLayout.valueColumnMinWidth, alignment: .trailing)
             }
         }
     }
@@ -252,6 +253,7 @@ struct TodayModelBarRow: View {
 
 enum TodayModelBarLayout {
     static let zeroFraction = 0.025
+    static let valueColumnMinWidth: CGFloat = 0
 
     static func barFraction(tokens: Int, maxTokens: Int) -> Double {
         guard tokens > 0, maxTokens > 0 else {

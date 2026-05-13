@@ -138,4 +138,8 @@ final class AppStateLedgerTests: XCTestCase {
         XCTAssertEqual(TodayModelBarLayout.barFraction(tokens: 500_000, maxTokens: 1_000_000), 0.5)
         XCTAssertEqual(TodayModelBarLayout.barFraction(tokens: 2_000_000, maxTokens: 1_000_000), 1)
     }
+
+    func testModelBarValueColumnDoesNotReserveWideEmptyGutter() {
+        XCTAssertEqual(TodayModelBarLayout.valueColumnMinWidth, 0)
+    }
 }
