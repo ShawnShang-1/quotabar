@@ -296,4 +296,6 @@ PLIST
 
 generate_app_icon
 
+/usr/bin/codesign --force --sign - "$APP_DIR"
+
 echo "Created $APP_DIR"

@@ -74,13 +74,13 @@ final class AppState: ObservableObject {
         }
         self.memoryEvents = memoryEvents
         let initialTodaySummary = UsageAggregator.summary(
-            for: memoryEvents,
+            for: Self.dashboardEvents(from: memoryEvents),
             interval: Self.todayInterval()
         )
         self.todaySummary = initialTodaySummary
         self.todayByModel = Self.displayModelRows(from: initialTodaySummary)
         self.monthlyTrend = UsageAggregator.dailyTrend(
-            for: memoryEvents,
+            for: Self.dashboardEvents(from: memoryEvents),
             interval: Self.trailingThirtyDaysInterval()
         )
     }
@@ -107,7 +107,7 @@ final class AppState: ObservableObject {
     }
 
     var currentAlertCandidates: [UsageAlertCandidate] {
-        let events = currentEvents()
+        let events = dashboardEvents()
         let currentHour = Self.currentHourInterval()
         let previousHours = Self.previousHoursInterval()
         let currentHourCost = events
@@ -324,11 +324,11 @@ final class AppState: ObservableObject {
         } else {
             memoryEvents.append(event)
         }
-        rebuildSnapshots(from: currentEvents())
+        rebuildSnapshots(from: dashboardEvents())
     }
 
     private func reloadLedger() {
-        rebuildSnapshots(from: currentEvents())
+        rebuildSnapshots(from: dashboardEvents())
     }
 
     private func flushMemoryEventsToLedgerIfNeeded() {
@@ -366,6 +366,31 @@ final class AppState: ObservableObject {
         } catch {
             lastErrorMessage = error.localizedDescription
             return memoryEvents
+        }
+    }
+
+    private func dashboardEvents() -> [UsageEvent] {
+        let cutoff = Self.dashboardCutoff()
+        guard let modelContext else {
+            return Self.dashboardEvents(from: memoryEvents)
+        }
+
+        do {
+            let descriptor = FetchDescriptor<UsageLedgerEntry>(
+                predicate: #Predicate { entry in
+                    entry.timestamp >= cutoff
+                },
+                sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+            )
+            let persistedEvents = try modelContext.fetch(descriptor).compactMap(\.usageEvent)
+            let persistedIDs = Set(persistedEvents.map(\.id))
+            let pendingEvents = memoryEvents.filter {
+                $0.timestamp >= cutoff && !persistedIDs.contains($0.id)
+            }
+            return persistedEvents + pendingEvents
+        } catch {
+            lastErrorMessage = error.localizedDescription
+            return Self.dashboardEvents(from: memoryEvents)
         }
     }
 
@@ -547,6 +572,19 @@ final class AppState: ObservableObject {
         let start = calendar.date(byAdding: .day, value: -29, to: today) ?? today
         let end = calendar.date(byAdding: .day, value: 1, to: today) ?? now
         return DateInterval(start: start, end: end)
+    }
+
+    private static func dashboardCutoff(now: Date = .now, calendar: Calendar = .current) -> Date {
+        trailingThirtyDaysInterval(now: now, calendar: calendar).start
+    }
+
+    private static func dashboardEvents(
+        from events: [UsageEvent],
+        now: Date = .now,
+        calendar: Calendar = .current
+    ) -> [UsageEvent] {
+        let cutoff = dashboardCutoff(now: now, calendar: calendar)
+        return events.filter { $0.timestamp >= cutoff }
     }
 
     private static func currentHourInterval(now: Date = .now, calendar: Calendar = .current) -> DateInterval {

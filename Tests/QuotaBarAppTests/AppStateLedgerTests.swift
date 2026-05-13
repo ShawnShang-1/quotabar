@@ -132,6 +132,49 @@ final class AppStateLedgerTests: XCTestCase {
         XCTAssertEqual(appState.monthlyTrend.reduce(Decimal.zero) { $0 + $1.totalCostUSD }, Decimal(string: "0.10")!)
     }
 
+    func testAttachModelContextRetainsOlderLedgerEntriesButDashboardIgnoresThem() throws {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let retainedDay = try XCTUnwrap(calendar.date(byAdding: .day, value: -29, to: today))
+        let prunedDay = try XCTUnwrap(calendar.date(byAdding: .day, value: -30, to: today))
+        let retainedEvent = UsageEvent(
+            timestamp: retainedDay.addingTimeInterval(60),
+            provider: .deepSeek,
+            model: "deepseek-v4-flash",
+            usage: TokenUsage(inputTokens: 10, outputTokens: 2),
+            costUSD: Decimal(string: "0.25")!,
+            statusCode: 200,
+            durationMS: 20,
+            clientLabel: "cc-switch",
+            isAnomalous: false
+        )
+        let prunedEvent = UsageEvent(
+            timestamp: prunedDay.addingTimeInterval(60),
+            provider: .deepSeek,
+            model: "deepseek-v4-pro",
+            usage: TokenUsage(inputTokens: 100, outputTokens: 20),
+            costUSD: Decimal(string: "99")!,
+            statusCode: 200,
+            durationMS: 20,
+            clientLabel: "cc-switch",
+            isAnomalous: false
+        )
+        let appState = AppState(settings: .default, memoryEvents: [retainedEvent, prunedEvent])
+        let container = try ModelContainer(
+            for: UsageLedgerEntry.self,
+            ProviderBalanceEntry.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let context = ModelContext(container)
+
+        appState.attachModelContext(context)
+
+        let persisted = try context.fetch(FetchDescriptor<UsageLedgerEntry>())
+        XCTAssertEqual(persisted.count, 2)
+        XCTAssertEqual(Set(persisted.map(\.id)), Set([retainedEvent.id, prunedEvent.id]))
+        XCTAssertEqual(appState.monthlyTrend.reduce(Decimal.zero) { $0 + $1.totalCostUSD }, Decimal(string: "0.25")!)
+    }
+
     func testModelBarLayoutKeepsZeroUsageAsThinBar() {
         XCTAssertEqual(TodayModelBarLayout.barFraction(tokens: 0, maxTokens: 0), 0.025)
         XCTAssertEqual(TodayModelBarLayout.barFraction(tokens: 0, maxTokens: 1_000_000), 0.025)

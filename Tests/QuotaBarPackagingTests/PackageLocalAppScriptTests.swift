@@ -29,5 +29,13 @@ final class PackageLocalAppScriptTests: XCTestCase {
         XCTAssertEqual(plist["LSUIElement"] as? Bool, true)
         XCTAssertEqual(plist["CFBundleExecutable"] as? String, "QuotaBar")
         XCTAssertEqual(plist["CFBundleIconFile"] as? String, "AppIcon")
+
+        let verify = Process()
+        verify.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        verify.arguments = ["--verify", "--deep", "--strict", appBundle.path]
+        try verify.run()
+        verify.waitUntilExit()
+
+        XCTAssertEqual(verify.terminationStatus, 0)
     }
 }
