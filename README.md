@@ -10,12 +10,12 @@ QuotaBar 是一个原生 macOS 状态栏 App，用来监控通过本机代理调
 
 当前包是本机自用风格的 ad-hoc 签名版本，未做 Apple Developer ID 公证。第一次打开时 macOS 可能提示安全警告。
 
-- 下载当前版本：[QuotaBar-v0.1.0-macOS.zip](release-assets/QuotaBar-v0.1.0-macOS.zip)
+- 下载当前版本：[QuotaBar-v0.1.1-macOS.zip](release-assets/QuotaBar-v0.1.1-macOS.zip)
 - 或到 GitHub Releases 下载未来版本：[Releases](https://github.com/ShawnShang-1/quotabar/releases)
 
 安装：
 
-1. 下载并解压 `QuotaBar-v0.1.0-macOS.zip`。
+1. 下载并解压 `QuotaBar-v0.1.1-macOS.zip`。
 2. 把 `QuotaBar.app` 拖到 `/Applications`。
 3. 如果 macOS 阻止打开，右键点击 `QuotaBar.app`，选择“打开”。也可以在终端执行：
 
@@ -143,12 +143,12 @@ The current release focuses on DeepSeek. The architecture leaves room for Anthro
 
 The current build is ad-hoc signed and not notarized with Apple Developer ID. macOS may show a security warning the first time you open it.
 
-- Download current build: [QuotaBar-v0.1.0-macOS.zip](release-assets/QuotaBar-v0.1.0-macOS.zip)
+- Download current build: [QuotaBar-v0.1.1-macOS.zip](release-assets/QuotaBar-v0.1.1-macOS.zip)
 - Future builds: [GitHub Releases](https://github.com/ShawnShang-1/quotabar/releases)
 
 Install:
 
-1. Download and unzip `QuotaBar-v0.1.0-macOS.zip`.
+1. Download and unzip `QuotaBar-v0.1.1-macOS.zip`.
 2. Move `QuotaBar.app` to `/Applications`.
 3. If macOS blocks it, right-click the app and choose Open. You can also run:
 

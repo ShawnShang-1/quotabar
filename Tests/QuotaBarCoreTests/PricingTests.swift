@@ -14,7 +14,7 @@ import Testing
     #expect(cost == Decimal(string: "3.02"))
 }
 
-@Test func discountedV4ProPricingComputesCNYCostFromCacheHitMissAndOutputTokens() throws {
+@Test func v4ProPricingUsesManualDefaultCNYRates() throws {
     let pricing = try DeepSeekPricing.pricing(
         for: "deepseek-v4-pro",
         at: Date(timeIntervalSince1970: 1_778_688_000)
@@ -29,7 +29,7 @@ import Testing
     #expect(cost == Decimal(string: "9.025"))
 }
 
-@Test func v4ProPricingUsesStandardRatesAfterTemporaryDiscountExpires() throws {
+@Test func v4ProPricingStaysOnManualDefaultRatesAcrossDates() throws {
     let pricing = try DeepSeekPricing.pricing(
         for: "deepseek-v4-pro",
         at: Date(timeIntervalSince1970: 1_780_249_600)
@@ -41,7 +41,7 @@ import Testing
         completionTokens: 1_000_000
     )
 
-    #expect(cost == Decimal(string: "36.1"))
+    #expect(cost == Decimal(string: "9.025"))
 }
 
 @Test func customPricingCatalogOverridesV4FlashAndProRates() throws {

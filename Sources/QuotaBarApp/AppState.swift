@@ -40,9 +40,6 @@ final class AppState: ObservableObject {
     @Published var proxyStatus: ProxyStatus = .stopped
     @Published var deepSeekAPIKeyDraft = ""
     @Published var lastErrorMessage: String?
-    @Published var ledgerModelFilter = ""
-    @Published var ledgerClientFilter = ""
-    @Published var ledgerStatusFilter = ""
 
     private let keychain: KeychainCredentialStore
     private let settingsStore: PersistentSettingsStore
@@ -290,18 +287,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    func exportLedgerCSV() {
-        exportLedger(suggestedName: "quotabar-ledger.csv") { events in
-            Data(try UsageLedgerExporter.exportCSV(events).utf8)
-        }
-    }
-
-    func exportLedgerJSON() {
-        exportLedger(suggestedName: "quotabar-ledger.json") { events in
-            try UsageLedgerExporter.exportJSON(events)
-        }
-    }
-
     func copyProxyBaseURLToPasteboard() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(proxyBaseURLText, forType: .string)
@@ -347,25 +332,6 @@ final class AppState: ObservableObject {
             lastErrorMessage = nil
         } catch {
             lastErrorMessage = error.localizedDescription
-        }
-    }
-
-    private func currentEvents() -> [UsageEvent] {
-        guard let modelContext else {
-            return memoryEvents
-        }
-
-        do {
-            let descriptor = FetchDescriptor<UsageLedgerEntry>(
-                sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
-            )
-            let persistedEvents = try modelContext.fetch(descriptor).compactMap(\.usageEvent)
-            let persistedIDs = Set(persistedEvents.map(\.id))
-            let pendingEvents = memoryEvents.filter { !persistedIDs.contains($0.id) }
-            return persistedEvents + pendingEvents
-        } catch {
-            lastErrorMessage = error.localizedDescription
-            return memoryEvents
         }
     }
 
@@ -417,44 +383,6 @@ final class AppState: ObservableObject {
             throw AppStateError.missingDeepSeekAPIKey
         }
         return apiKey
-    }
-
-    private func exportLedger(
-        suggestedName: String,
-        writer: ([UsageEvent]) throws -> Data
-    ) {
-        let events = UsageLedgerExporter.filter(currentEvents(), query: ledgerQuery)
-        do {
-            let data = try writer(events)
-            let panel = NSSavePanel()
-            panel.nameFieldStringValue = suggestedName
-            panel.canCreateDirectories = true
-            panel.isExtensionHidden = false
-
-            if panel.runModal() == .OK, let url = panel.url {
-                try data.write(to: url, options: .atomic)
-            }
-            lastErrorMessage = nil
-        } catch {
-            lastErrorMessage = error.localizedDescription
-        }
-    }
-
-    private var ledgerQuery: UsageLedgerQuery {
-        let statusTokens = ledgerStatusFilter
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let statusCodes = statusTokens.compactMap(Int.init)
-        if !statusTokens.isEmpty, statusCodes.count != statusTokens.count {
-            lastErrorMessage = "Status filter must contain only numeric HTTP status codes."
-        }
-
-        return UsageLedgerQuery(
-            models: ledgerModelFilter.isEmpty ? [] : [ledgerModelFilter],
-            clientLabels: ledgerClientFilter.isEmpty ? [] : [ledgerClientFilter],
-            statusCodes: Set(statusCodes)
-        )
     }
 
     private func persistSettings() {

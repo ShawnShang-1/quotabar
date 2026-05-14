@@ -167,22 +167,8 @@ struct SettingsView: View {
             }
 
             Section("账本") {
-                TextField("模型过滤", text: $appState.ledgerModelFilter)
-                TextField("调用方过滤", text: $appState.ledgerClientFilter)
-                TextField("状态码过滤，用逗号分隔", text: $appState.ledgerStatusFilter)
-
-                HStack {
-                    Button("导出 CSV") {
-                        appState.exportLedgerCSV()
-                    }
-
-                    Button("导出 JSON") {
-                        appState.exportLedgerJSON()
-                    }
-
-                    Button("清空账本", role: .destructive) {
-                        appState.clearLedger()
-                    }
+                Button("清空账本", role: .destructive) {
+                    appState.clearLedger()
                 }
             }
 

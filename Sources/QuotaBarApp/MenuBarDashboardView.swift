@@ -34,6 +34,10 @@ struct MenuBarDashboardView: View {
         appState.todayByModel.map(\.totalTokens).max() ?? 0
     }
 
+    private var modelTokenCapacity: Int {
+        TodayModelBarLayout.capacity(for: maxModelTokens)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -55,12 +59,13 @@ struct MenuBarDashboardView: View {
                     ForEach(appState.todayByModel) { item in
                         TodayModelBarRow(
                             item: item,
-                            maxTokens: maxModelTokens,
-                            tint: color(for: item.model)
+                            capacity: modelTokenCapacity,
+                            tint: color(for: item.model),
+                            outputTint: outputColor(for: item.model)
                         )
                     }
                 }
-                .frame(height: 136, alignment: .center)
+                .frame(height: 162, alignment: .center)
             }
 
             chartSection(title: "Monthly cost trend") {
@@ -207,12 +212,24 @@ struct MenuBarDashboardView: View {
             .secondary
         }
     }
+
+    private func outputColor(for model: String) -> Color {
+        switch model {
+        case DisplayModel.flash.rawValue:
+            Color(red: 0.10, green: 0.50, blue: 0.98)
+        case DisplayModel.pro.rawValue:
+            Color(red: 1.00, green: 0.34, blue: 0.18)
+        default:
+            .primary
+        }
+    }
 }
 
 struct TodayModelBarRow: View {
     var item: UsageModelSummary
-    var maxTokens: Int
+    var capacity: Int
     var tint: Color
+    var outputTint: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -224,13 +241,29 @@ struct TodayModelBarRow: View {
 
             HStack(spacing: 8) {
                 GeometryReader { proxy in
-                    let width = max(2, proxy.size.width * TodayModelBarLayout.barFraction(tokens: item.totalTokens, maxTokens: maxTokens))
+                    let segments = TodayModelBarLayout.segments(
+                        inputTokens: item.inputTokens,
+                        outputTokens: item.outputTokens,
+                        capacity: capacity
+                    )
+                    let totalWidth = max(2, proxy.size.width * segments.totalFraction)
+                    let totalTokens = max(0, item.inputTokens + item.outputTokens)
+                    let inputShare = totalTokens > 0 ? Double(item.inputTokens) / Double(totalTokens) : 1
+                    let inputWidth = totalWidth * inputShare
+                    let outputWidth = totalWidth - inputWidth
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(Color.secondary.opacity(0.10))
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(tint)
-                            .frame(width: width)
+                        HStack(spacing: 0) {
+                            Rectangle()
+                                .fill(tint)
+                                .frame(width: inputWidth)
+                            Rectangle()
+                                .fill(outputTint)
+                                .frame(width: outputWidth)
+                        }
+                        .frame(width: totalWidth, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                 }
                 .frame(height: 30)
@@ -247,6 +280,23 @@ struct TodayModelBarRow: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .frame(minWidth: TodayModelBarLayout.valueColumnMinWidth, alignment: .trailing)
             }
+
+            HStack(spacing: 8) {
+                legendItem(color: tint, label: "in \(item.inputTokens.formatted(.number.notation(.compactName)))")
+                legendItem(color: outputTint, label: "out \(item.outputTokens.formatted(.number.notation(.compactName)))")
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+    }
+
+    private func legendItem(color: Color, label: String) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(label)
         }
     }
 }
@@ -254,12 +304,45 @@ struct TodayModelBarRow: View {
 enum TodayModelBarLayout {
     static let zeroFraction = 0.025
     static let valueColumnMinWidth: CGFloat = 0
+    private static let tiers = [1_000_000, 10_000_000, 30_000_000, 100_000_000]
+
+    struct Segments: Equatable {
+        var inputFraction: Double
+        var outputFraction: Double
+        var totalFraction: Double
+    }
+
+    static func capacity(for maxTokens: Int) -> Int {
+        let tokens = max(0, maxTokens)
+        if let tier = tiers.first(where: { tokens <= $0 }) {
+            return tier
+        }
+        let step = tiers.last ?? 100_000_000
+        return Int(ceil(Double(tokens) / Double(step))) * step
+    }
 
     static func barFraction(tokens: Int, maxTokens: Int) -> Double {
         guard tokens > 0, maxTokens > 0 else {
             return zeroFraction
         }
         return min(1, max(0.04, Double(tokens) / Double(maxTokens)))
+    }
+
+    static func segments(inputTokens: Int, outputTokens: Int, capacity: Int) -> Segments {
+        let inputTokens = max(0, inputTokens)
+        let outputTokens = max(0, outputTokens)
+        let totalTokens = inputTokens + outputTokens
+        guard totalTokens > 0, capacity > 0 else {
+            return Segments(inputFraction: zeroFraction, outputFraction: 0, totalFraction: zeroFraction)
+        }
+
+        let inputFraction = min(1, Double(inputTokens) / Double(capacity))
+        let outputFraction = min(1 - inputFraction, Double(outputTokens) / Double(capacity))
+        return Segments(
+            inputFraction: inputFraction,
+            outputFraction: outputFraction,
+            totalFraction: min(1, inputFraction + outputFraction)
+        )
     }
 }
 

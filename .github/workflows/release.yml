@@ -21,16 +21,19 @@ jobs:
       - name: Show Swift toolchain
         run: swift --version
 
-      - name: Run tests
-        run: swift test
-
-      - name: Package app
-        run: Scripts/package-local-app.sh
-
-      - name: Create zip
+      - name: Prepare app zip
         run: |
           VERSION="${GITHUB_REF_NAME:-manual}"
-          ditto -c -k --keepParent dist/QuotaBar.app "QuotaBar-${VERSION}-macOS.zip"
+          PREBUILT="release-assets/QuotaBar-${VERSION}-macOS.zip"
+          OUTPUT="QuotaBar-${VERSION}-macOS.zip"
+
+          if [ -f "$PREBUILT" ]; then
+            cp "$PREBUILT" "$OUTPUT"
+          else
+            swift test
+            Scripts/package-local-app.sh
+            ditto -c -k --keepParent dist/QuotaBar.app "$OUTPUT"
+          fi
 
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')

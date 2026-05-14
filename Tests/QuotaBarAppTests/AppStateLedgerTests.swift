@@ -182,6 +182,35 @@ final class AppStateLedgerTests: XCTestCase {
         XCTAssertEqual(TodayModelBarLayout.barFraction(tokens: 2_000_000, maxTokens: 1_000_000), 1)
     }
 
+    func testModelBarUsesTieredTokenCapacity() {
+        XCTAssertEqual(TodayModelBarLayout.capacity(for: 0), 1_000_000)
+        XCTAssertEqual(TodayModelBarLayout.capacity(for: 300_000), 1_000_000)
+        XCTAssertEqual(TodayModelBarLayout.capacity(for: 1_000_001), 10_000_000)
+        XCTAssertEqual(TodayModelBarLayout.capacity(for: 10_000_001), 30_000_000)
+        XCTAssertEqual(TodayModelBarLayout.capacity(for: 30_000_001), 100_000_000)
+        XCTAssertEqual(TodayModelBarLayout.capacity(for: 100_000_001), 200_000_000)
+    }
+
+    func testModelBarSplitsInputAndOutputSegmentsInsideTotalBar() {
+        let segments = TodayModelBarLayout.segments(
+            inputTokens: 700_000,
+            outputTokens: 300_000,
+            capacity: 1_000_000
+        )
+
+        XCTAssertEqual(segments.inputFraction, 0.7, accuracy: 0.0001)
+        XCTAssertEqual(segments.outputFraction, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(segments.totalFraction, 1.0, accuracy: 0.0001)
+    }
+
+    func testModelBarSegmentsUseThinInputMarkerWhenUnused() {
+        let segments = TodayModelBarLayout.segments(inputTokens: 0, outputTokens: 0, capacity: 1_000_000)
+
+        XCTAssertEqual(segments.inputFraction, TodayModelBarLayout.zeroFraction)
+        XCTAssertEqual(segments.outputFraction, 0)
+        XCTAssertEqual(segments.totalFraction, TodayModelBarLayout.zeroFraction)
+    }
+
     func testModelBarValueColumnDoesNotReserveWideEmptyGutter() {
         XCTAssertEqual(TodayModelBarLayout.valueColumnMinWidth, 0)
     }

@@ -48,12 +48,6 @@ public struct DeepSeekModelPricing: Codable, Equatable, Sendable {
         outputUSDPerMillion: Decimal(string: "6")!
     )
 
-    public static let standardV4ProCNY = DeepSeekModelPricing(
-        canonicalModel: "deepseek-v4-pro",
-        cacheHitInputUSDPerMillion: Decimal(string: "0.1")!,
-        cacheMissInputUSDPerMillion: Decimal(string: "12")!,
-        outputUSDPerMillion: Decimal(string: "24")!
-    )
 }
 
 public struct DeepSeekPricingCatalog: Codable, Equatable, Sendable {
@@ -95,19 +89,17 @@ public struct DeepSeekPricing: Sendable {
     public static let current = DeepSeekPricing()
 
     private static let v4Flash = DeepSeekModelPricing.defaultV4FlashCNY
-    private static let v4Pro = DeepSeekModelPricing.standardV4ProCNY
-    private static let v4ProDiscounted = DeepSeekModelPricing.defaultV4ProCNY
-
-    private static let v4ProDiscountEndsAt = Date(timeIntervalSince1970: 1_780_243_200)
+    private static let v4Pro = DeepSeekModelPricing.defaultV4ProCNY
 
     public init() {}
 
     public static func pricing(for model: String, at date: Date = .now) throws -> DeepSeekModelPricing {
+        _ = date
         switch baseModelName(for: model) {
         case "deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash":
-            v4Flash
+            return v4Flash
         case "deepseek-v4-pro":
-            date < v4ProDiscountEndsAt ? v4ProDiscounted : v4Pro
+            return v4Pro
         default:
             throw DeepSeekPricingError.unsupportedModel(model)
         }
